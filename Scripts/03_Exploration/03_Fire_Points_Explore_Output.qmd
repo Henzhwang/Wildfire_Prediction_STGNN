@@ -1,0 +1,647 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import os
+import re
+import glob
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
+from libpysal.weights import Queen
+from esda.moran import Moran
+from esda.getisord import G_Local
+from scipy.stats import gaussian_kde
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from splot.esda import moran_scatterplot
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+# PROJECT_ROOT = PROJECT_ROOT.parents[1]
+FIRE_DIR = PROJECT_ROOT/'Processed Data'/'Fire Points'/'Fire Points.shp'
+GRID_DIR = PROJECT_ROOT/'Processed Data'/'Grid'/'STATCAN0.25'/'BC_grids_boundary0.25.geojson'
+BOUND_DIR = PROJECT_ROOT/'Processed Data'/'Boundary'/'BC'/'BC_boundary_simple.geojson'
+
+OUTPUT_DIR = PROJECT_ROOT/'Output'/'Figures'/'Fire Points'
+```
+
+```{python}
+grid = gpd.read_file(GRID_DIR)
+fire_points = gpd.read_file(FIRE_DIR)
+bc_boundary = gpd.read_file(BOUND_DIR)
+
+## data combinations
+dates = pd.date_range('2019-01-01', '2024-12-31', freq='D')
+```
+
+
+## Basic
+
+```{python}
+
+```
+
+```{python}
+plt.style.use('seaborn-v0_8-whitegrid')
+sns.set_palette("husl")
+plt.rcParams['font.size'] = 10
+plt.rcParams['axes.titleweight'] = 'bold'
+
+
+fire_points = gpd.read_file(FIRE_DIR)
+grids = gpd.read_file(GRID_DIR)
+bc_boundary = gpd.read_file(BOUND_DIR)
+
+
+# check missing value
+missing = fire_points[['YEAR', 'MONTH', 'SIZE_HA', 'geometry']].isnull().sum()
+if missing.sum() > 0:
+    print(missing[missing > 0])
+else:
+    print("   No missing values in key fields!")
+
+
+print("\nConverting to BC Albers (EPSG:3005)...")
+fire_albers = fire_points.to_crs('EPSG:3005')
+grids_albers = grids.to_crs('EPSG:3005')
+bc_boundary_albers = bc_boundary.to_crs('EPSG:3005')
+```
+
+## Temporal
+```{python}
+## yearly stats
+print("\nYEARLY STATISTICS:")
+yearly_stats = fire_points.groupby('YEAR').agg({
+    'FIRE_ID': 'count',
+    'SIZE_HA': ['sum', 'mean', 'median']
+}).round(2)
+yearly_stats.columns = ['Fire_Count', 'Total_Area_ha', 'Mean_Area_ha', 'Median_Area_ha']
+yearly_stats['Total_Area_km2'] = (yearly_stats['Total_Area_ha'] / 100).round(2)
+print(yearly_stats)
+
+## define fire season
+fire_points['Fire_Season'] = fire_points['MONTH'].apply(
+    lambda x: 'Fire_Season' if 4 <= x <= 9 else 'Non_Fire_Season'
+)
+
+
+year_month_counts = fire_points.pivot_table(
+    values='FIRE_ID',
+    index='YEAR',
+    columns='MONTH',
+    aggfunc='count',
+    fill_value=0
+).astype(int)
+
+
+fire_season_by_year = []
+non_fire_season_by_year = []
+years = year_month_counts.index.tolist()
+
+for year in years:
+    fs_count = year_month_counts.loc[year, 4:9].sum()
+    nfs_count = year_month_counts.loc[year, [1,2,3,10,11,12]].sum()
+    fire_season_by_year.append(fs_count)
+    non_fire_season_by_year.append(nfs_count)
+
+season_summary = pd.DataFrame({
+    'Year': years,
+    'Fire_Season_Count': fire_season_by_year,
+    'Non_Fire_Season_Count': non_fire_season_by_year,
+    'Total': [fs + nfs for fs, nfs in zip(fire_season_by_year, non_fire_season_by_year)],
+    'Fire_Season_Pct': [fs/(fs+nfs)*100 for fs, nfs in zip(fire_season_by_year, non_fire_season_by_year)]
+})
+print(season_summary.round(1).to_string(index=False))
+```
+
+## spatial
+```{python}
+## fire points per grid
+grid_fire_join = gpd.sjoin(
+    grids_albers,
+    fire_albers,
+    how='left',
+    predicate='contains'
+)
+
+grids_with_counts = grid_fire_join.groupby('grid_id').agg({
+    'FIRE_ID': 'count',
+    'SIZE_HA': 'sum'
+}).reset_index()
+grids_with_counts.columns = ['grid_id', 'fire_count', 'total_area_ha']
+
+## back to grids
+grids_with_counts = grids_albers.merge(grids_with_counts, on='grid_id', how='left')
+grids_with_counts['fire_count'] = grids_with_counts['fire_count'].fillna(0).astype(int)
+grids_with_counts['total_area_ha'] = grids_with_counts['total_area_ha'].fillna(0)
+
+# compute fire density
+grids_with_counts['grid_area_km2'] = grids_with_counts.geometry.area / 1e6
+grids_with_counts['fire_density'] = (
+    grids_with_counts['fire_count'] / grids_with_counts['grid_area_km2']
+).round(3)
+
+
+print(f"   Grids with fires: {(grids_with_counts['fire_count'] > 0).sum()} / {len(grids_with_counts)}")
+```
+
+```{python}
+
+print("Building spatial weights matrix...")
+w = Queen.from_dataframe(grids_with_counts)
+w.transform = 'r'
+print(f"Weights matrix: {w.n} nodes, avg neighbors = {w.mean_neighbors:.1f}")
+
+moran = Moran(grids_with_counts['fire_count'], w, permutations=999)
+print(f"\n   Moran's I: {moran.I:.4f}")
+print(f"   p-value: {moran.p_sim:.4f}")
+print(f"   z-score: {moran.z_sim:.4f}")
+
+if moran.p_sim < 0.01:
+    print(f"   Significant spatial clustering (p<0.01)")
+elif moran.p_sim < 0.05:
+    print(f"   Significant spatial clustering (p<0.05)")
+
+
+# Getis-Ord Gi*
+gi_star = G_Local(grids_with_counts['fire_count'], w)
+
+grids_with_counts['gi_star'] = gi_star.Zs
+grids_with_counts['gi_pvalue'] = gi_star.p_sim
+
+def classify_hotspot(row):
+    if row['gi_pvalue'] >= 0.05:
+        return 'Not Significant'
+    elif row['gi_star'] > 2.58:
+        return 'Hot Spot (99%)'
+    elif row['gi_star'] > 1.96:
+        return 'Hot Spot (95%)'
+    elif row['gi_star'] > 1.65:
+        return 'Hot Spot (90%)'
+    elif row['gi_star'] < -2.58:
+        return 'Cold Spot (99%)'
+    elif row['gi_star'] < -1.96:
+        return 'Cold Spot (95%)'
+    elif row['gi_star'] < -1.65:
+        return 'Cold Spot (90%)'
+    else:
+        return 'Not Significant'
+
+grids_with_counts['hotspot_class'] = grids_with_counts.apply(classify_hotspot, axis=1)
+
+print("\n   Hotspot Classification:")
+print(grids_with_counts['hotspot_class'].value_counts().sort_index())
+
+hot_spots = grids_with_counts[
+    (grids_with_counts['gi_pvalue'] < 0.05) & 
+    (grids_with_counts['gi_star'] > 1.96)
+]
+print(f"\n   Significant hot spots (p<0.05, Z>1.96): {len(hot_spots)} grids")
+
+
+## LISA
+y = grids_with_counts['fire_count'].astype(float).values
+lisa = Moran_Local(y, w, permutations=999)
+
+quad_to_label = {
+    1: "High-High",
+    2: "Low-High",
+    3: "Low-Low",
+    4: "High-Low"
+}
+
+alpha = 0.05
+lisa_class = np.array(["Not Significant"] * len(grids_with_counts), dtype=object)
+sig = lisa.p_sim < alpha
+lisa_class[sig] = [quad_to_label.get(q, "Not Significant") for q in lisa.q[sig]]
+
+grids_with_counts['lisa_class'] = lisa_class
+grids_with_counts['lisa_p'] = lisa.p_sim
+grids_with_counts['lisa_I'] = lisa.Is
+
+print("\n  LISA Cluster Types:")
+print(grids_with_counts['lisa_class'].value_counts())
+print(f"   Significant clusters: {int(sig.sum())} / {len(grids_with_counts)}")
+
+
+# KDE
+print("   Computing fire density surface...")
+coords = np.vstack([fire_albers.geometry.x, fire_albers.geometry.y])
+kde = gaussian_kde(coords)
+
+xmin, ymin, xmax, ymax = grids_with_counts.total_bounds
+x_grid = np.linspace(xmin, xmax, 200)
+y_grid = np.linspace(ymin, ymax, 200)
+xx, yy = np.meshgrid(x_grid, y_grid)
+positions = np.vstack([xx.ravel(), yy.ravel()])
+density = np.reshape(kde(positions), xx.shape)
+print("   KDE computation completed")
+```
+
+
+```{python}
+mpl.rcParams.update({
+    "axes.titlesize": 16,      
+    "axes.labelsize": 14,      
+    "xtick.labelsize": 12,     
+    "ytick.labelsize": 12,     
+    "legend.fontsize": 12,     
+    "legend.title_fontsize": 13,
+})
+```
+
+```{python}
+fig1 = plt.figure(figsize=(16, 18), constrained_layout=True)
+gs1 = fig1.add_gridspec(3, 2, height_ratios=[0.7, 0.7, 1.3])
+
+# Annual Fire Count
+ax1 = fig1.add_subplot(gs1[0, 0])
+colors_bars = plt.cm.Reds(np.linspace(0.4, 0.9, len(years)))
+bars = ax1.bar(
+    yearly_stats.index, yearly_stats['Fire_Count'],
+    color=colors_bars, edgecolor='black', linewidth=1.2
+)
+ax1.set_xlabel('Year', fontsize=17, fontweight='bold')
+ax1.set_ylabel('Number of Fires', fontsize=17, fontweight='bold')
+# ax1.set_title('Annual Fire Count (2019–2024)', fontsize=13, fontweight='bold')
+ax1.grid(axis='y', alpha=0.3)
+
+ax1.text(-0.12, 1.05, 'A', transform=ax1.transAxes,
+         fontsize=20, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+for bar in bars:
+    h = bar.get_height()
+    ax1.text(bar.get_x() + bar.get_width()/2, h, f'{int(h):,}',
+             ha='center', va='bottom', fontsize=15, fontweight='bold')
+
+# Fire Season vs Non-Fire Season 
+ax2 = fig1.add_subplot(gs1[0, 1])
+x_pos = np.arange(len(years))
+width = 0.35
+
+bars1 = ax2.bar(
+    x_pos - width/2, fire_season_by_year, width,
+    label='Fire Season (Apr–Sep)', color='coral',
+    edgecolor='black', linewidth=1, alpha=0.85
+)
+bars2 = ax2.bar(
+    x_pos + width/2, non_fire_season_by_year, width,
+    label='Non-Fire Season', color='steelblue',
+    edgecolor='black', linewidth=1, alpha=0.85
+)
+
+for i, (fs, nfs) in enumerate(zip(fire_season_by_year, non_fire_season_by_year)):
+    total = fs + nfs
+    pct = (fs / total * 100) if total > 0 else 0
+    ax2.text(i, max(fs, nfs) + 100, f'{pct:.0f}%',
+             ha='center', va='bottom', fontsize=15, fontweight='bold')
+
+ax2.set_xlabel('Year', fontsize=17, fontweight='bold')
+ax2.set_ylabel('Number of Fires', fontsize=17, fontweight='bold')
+# ax2.set_title('Fire Season vs Non-Fire Season by Year', fontsize=13, fontweight='bold')
+ax2.set_xticks(x_pos)
+ax2.set_xticklabels(years)
+ax2.legend(loc='upper left', frameon=True, fontsize=14)
+ax2.grid(axis='y', alpha=0.3)
+
+ax2.text(-0.12, 1.05, 'B', transform=ax2.transAxes,
+         fontsize=20, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+# Moran's I Scatterplot
+ax3 = fig1.add_subplot(gs1[1, 0])
+moran_scatterplot(moran, ax=ax3, aspect_equal=True)
+# ax3.set_title(f"Global Moran's I Scatterplot\nI={moran.I:.4f}, p={moran.p_sim:.4f}",fontsize=13, fontweight='bold')
+ax3.set_xlabel('Fire Count (standardized)', fontsize=17)
+ax3.set_ylabel('Spatial Lag (standardized)', fontsize=17)
+
+ax3.text(-0.12, 1.05, 'C', transform=ax3.transAxes,
+         fontsize=20, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+# Moran's I Permutation Distribution
+ax4 = fig1.add_subplot(gs1[1, 1])
+ax4.hist(moran.sim, bins=30, color='gray', edgecolor='black', alpha=0.7)
+ax4.axvline(moran.I, color='red', linestyle='--', linewidth=2.5,
+            label=f"Observed I = {moran.I:.4f}")
+ax4.axvline(moran.EI, color='blue', linestyle='--', linewidth=2.5,
+            label=f"Expected I = {moran.EI:.4f}")
+# ax4.set_title("Moran's I Permutation Distribution", fontsize=13, fontweight='bold')
+ax4.set_xlabel("Moran's I", fontsize=17, fontweight='bold')
+ax4.set_ylabel('Frequency', fontsize=17, fontweight='bold')
+ax4.legend(fontsize=14, frameon=True)
+ax4.grid(alpha=0.3)
+
+ax4.text(-0.12, 1.05, 'D', transform=ax4.transAxes,
+         fontsize=20, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+# LISA
+ax5 = fig1.add_subplot(gs1[2, 0])
+lisa_colors = {
+    "High-High": "#D7191C",
+    "Low-Low": "#2B83BA",
+    "High-Low": "#FDAE61",
+    "Low-High": "#ABDDA4",
+    "Not Significant": "#F7F7F7"
+}
+plot_order = ["Not Significant", "Low-Low", "High-High", "Low-High", "High-Low"]
+
+for cat in plot_order:
+    subset = grids_with_counts[grids_with_counts['lisa_class'] == cat]
+    if len(subset) > 0:
+        subset.plot(
+            ax=ax5, color=lisa_colors[cat], edgecolor='black',
+            linewidth=0.2, alpha=0.85, label=cat
+        )
+
+# ax5.set_title("LISA Cluster Map (Local Moran's I)", fontsize=13, fontweight='bold')
+ax5.set_xlabel('Easting (m)', fontsize=17)
+ax5.set_ylabel('Northing (m)', fontsize=17)
+ax5.ticklabel_format(style='plain', axis='both')
+
+
+
+handles = [
+    mpatches.Patch(
+        facecolor=lisa_colors[cat],
+        edgecolor='black',
+        label=cat
+    )
+    for cat in plot_order
+]
+
+ax5.legend(
+    handles=handles,
+    loc='upper right',
+    fontsize=15,
+    title='Cluster Type',
+    frameon=True
+)
+
+ax5.text(-0.12, 1.05, 'E', transform=ax5.transAxes,
+         fontsize=20, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+# Getis-Ord Gi*
+ax6 = fig1.add_subplot(gs1[2, 1])
+
+#Getis-Ord Gi* Z-scores
+mappable = grids_with_counts.plot(
+    column='gi_star',
+    ax=ax6,
+    cmap='RdBu_r',
+    legend=False,
+    edgecolor='gray',
+    linewidth=0.2,
+    vmin=-3,
+    vmax=3
+)
+
+
+ax6.set_xlabel('Easting (m)', fontsize=17)
+ax6.set_ylabel('Northing (m)', fontsize=17)
+ax6.ticklabel_format(style='plain', axis='both')
+
+
+divider = make_axes_locatable(ax6)
+cax = divider.append_axes("right", size="4%", pad=0.10)
+
+cb = fig1.colorbar(
+    mappable.collections[0],
+    cax=cax,
+    ticks=[-3, -2, -1, 0, 1, 2, 3]
+)
+
+cb.set_label('Getis–Ord Gi* Z-score', fontsize=17, fontweight='bold')
+
+
+cb.ax.axhline( 1.96, color='black', linewidth=0.8, linestyle='--')
+cb.ax.axhline(-1.96, color='black', linewidth=0.8, linestyle='--')
+
+ax6.text(-0.12, 1.05, 'E', transform=ax6.transAxes,
+         fontsize=20, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+plt.savefig(OUTPUT_DIR / '02_Fire_EDA1.png', dpi=300)
+print("   Saved: figure1_comprehensive_analysis.png")
+```
+
+```{python}
+print("\nCreating Figure 2: Spatiotemporal Distribution...")
+```
+
+
+```{python}
+fig2 = plt.figure(figsize=(20, 6), constrained_layout=True)
+gs2 = fig2.add_gridspec(1, 2, height_ratios=[1.2])
+
+# Annual Burned Area
+ax1 = fig2.add_subplot(gs2[0, 0])
+bars = ax1.bar(
+    yearly_stats.index, yearly_stats['Total_Area_km2'],
+    color='tomato', edgecolor='black', linewidth=1.2, alpha=0.85
+)
+ax1.set_xlabel('Year', fontsize=17, fontweight='bold')
+ax1.set_ylabel('Total Burned Area (100 ha)', fontsize=17, fontweight='bold')
+# ax1.set_title('Annual Total Burned Area', fontsize=13, fontweight='bold')
+ax1.grid(axis='y', alpha=0.3)
+
+ax1.text(-0.12, 1.05, 'A', transform=ax1.transAxes,
+         fontsize=20, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+for bar in bars:
+    h = bar.get_height()
+    ax1.text(bar.get_x() + bar.get_width()/2, h, f'{h:,.0f}',
+             ha='center', va='bottom', fontsize=15, fontweight='bold')
+
+# Year-Month Fire Count Heatmap
+ax2 = fig2.add_subplot(gs2[0, 1])
+month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+
+im = ax2.imshow(year_month_counts_plot.values, cmap='YlOrRd',
+                aspect='auto', interpolation='nearest')
+ax2.set_xticks(np.arange(12))
+ax2.set_yticks(np.arange(len(years)))
+ax2.set_xticklabels(month_names, rotation=45, ha='right')
+ax2.set_yticklabels(years)
+# ax2.set_title('Year–Month Fire Count Heatmap', fontsize=13, fontweight='bold')
+ax2.set_xlabel('Month', fontsize=17, fontweight='bold')
+ax2.set_ylabel('Year', fontsize=17, fontweight='bold')
+ax2.grid(False)
+ax2.text(-0.12, 1.05, 'B', transform=ax2.transAxes,
+         fontsize=20, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+
+
+vmax = year_month_counts_plot.values.max() if year_month_counts_plot.values.size else 0
+for i in range(len(years)):
+    for j in range(12):
+        val = year_month_counts_plot.values[i, j]
+        color = "white" if vmax > 0 and val > vmax/2 else "black"
+        ax2.text(j, i, int(val), ha="center", va="center",
+                 color=color, fontsize=15, fontweight='bold')
+
+## heatmap colorbar
+divider2 = make_axes_locatable(ax2)
+cax2 = divider2.append_axes("right", size="4%", pad=0.10)
+cbar2 = fig2.colorbar(im, cax=cax2)
+cbar2.set_label('Fire Count', fontsize=15, fontweight='bold')
+
+plt.savefig(OUTPUT_DIR / "02_Fire_AB.png", dpi=300)
+plt.show()
+```
+
+
+```{python}
+years_maps = [2021, 2022, 2023, 2024]
+
+
+vals = grid_year_counts.loc[
+    grid_year_counts['YEAR'].isin(years_maps),
+    'fire_count'
+]
+
+vmax = int(np.quantile(vals, 0.99))
+vmax = max(vmax, 1)
+
+norm = mpl.colors.Normalize(vmin=0, vmax=vmax)
+cmap = mpl.cm.get_cmap('YlOrRd')
+
+# Figure & layout
+fig3 = plt.figure(figsize=(20, 18), constrained_layout=True)
+gs = fig3.add_gridspec(
+    2, 3,
+    width_ratios=[1, 1, 0.04],
+    hspace=0.08,
+    wspace=0.05
+)
+
+axs = [
+    fig3.add_subplot(gs[0, 0]),  
+    fig3.add_subplot(gs[0, 1]),
+    fig3.add_subplot(gs[1, 0]),
+    fig3.add_subplot(gs[1, 1]),
+]
+
+cax = fig3.add_subplot(gs[:, 2])
+
+axs[0].text(
+    -0.12, 1.05, 'C',
+    transform=axs[0].transAxes,
+    fontsize=20,
+    fontweight='bold',
+    va='bottom',
+    ha='left',
+    clip_on=False
+)
+
+# Plot maps
+for ax, yr in zip(axs, years_maps):
+    gdf_y = grid_year_counts[grid_year_counts['YEAR'] == yr]
+
+    gdf_y.plot(
+        column='fire_count',
+        ax=ax,
+        cmap=cmap,
+        vmin=0,
+        vmax=vmax,
+        edgecolor='0.6',
+        linewidth=0.12,
+        alpha=0.98
+    )
+
+    ax.set_title(str(yr), fontsize=17, fontweight='bold')
+
+    
+    ax.ticklabel_format(style='plain', axis='both')
+
+    
+    ax.grid(True, alpha=0.25, linewidth=0.6)
+
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+
+# use shard colorbar
+sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+sm.set_array([])
+
+cb = fig3.colorbar(sm, cax=cax)
+cb.set_label('Fire Count per Grid', fontsize=15, fontweight='bold')
+
+plt.savefig(OUTPUT_DIR / "02_Fire_C.png", dpi=300)
+plt.show()
+```
+
+
+
+```{python}
+from PIL import Image
+
+img1 = Image.open('/Users/henzhwang/Desktop/STA4101/Output/Figures/Fire Points/02_Fire_AB.png')
+img2 = Image.open('/Users/henzhwang/Desktop/STA4101/Output/Figures/Fire Points/02_Fire_C.png')
+
+w = max(img1.width, img2.width)
+h = img1.height + img2.height
+
+combined = Image.new("RGB", (w, h), "white")
+combined.paste(img1, (0, 0))
+combined.paste(img2, (0, img1.height))
+
+combined.save("Figure2_Combined.png")
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

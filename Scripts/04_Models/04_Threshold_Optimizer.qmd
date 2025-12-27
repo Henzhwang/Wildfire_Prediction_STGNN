@@ -1,0 +1,331 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import sys
+import os
+import re
+import glob
+import torch
+from tqdm import tqdm
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+from sklearn.metrics import f1_score, precision_score, recall_score, confusion_matrix
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+sys.path.append("/Users/henzhwang/Desktop/STA4101/Scripts/04_Models")
+
+from graph_builder import BCFireGraphBuilder
+from stgnn_model import BCWildfireSTGNN
+from data_loader import TemporalSplit, create_dataloaders
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+DATA_DIR = PROJECT_ROOT/'Processed Data'/'grid_all_neighbors.parquet'
+MODEL_DIR = PROJECT_ROOT/'Output'/'Model Run'/'Standard'/'best_model.pth'
+GRAPH_DIR = PROJECT_ROOT/'Output'/'Model Run'/'Standard'/'graph_structure.pkl'
+OUTPUT_DIR = PROJECT_ROOT/'Output'/'Threshold'
+```
+
+```{python}
+df = pd.read_parquet(DATA_DIR)
+
+train_df, val_df, test_df = TemporalSplit.split_by_date(
+    df, 
+    train_end='2022-12-31',
+    val_end='2023-12-31'
+)
+
+print(f"#Sample: {len(test_df):,} ")
+print(f"Fire Incidents: {test_df['Fire_occurred'].sum():,}")
+```
+
+```{python}
+# rebuild graph
+builder = BCFireGraphBuilder(num_neighbors=8)
+
+graph = builder.load_graph_structure(str(GRAPH_DIR))
+
+
+# feature columns
+exclude_cols = ['grid_id', 'Date', 'Fire_occurred', 'centroid_lon', 'centroid_lat']
+feature_cols = [col for col in df.columns if col not in exclude_cols]
+
+
+_, _, test_loader = create_dataloaders(
+    train_df, val_df, test_df,
+    graph, feature_cols,
+    target_col='Fire_occurred',
+    seq_len=14,
+    batch_size=16,
+    num_workers=0
+)
+```
+
+```{python}
+device = 'cpu'
+model = BCWildfireSTGNN(
+    num_features=len(feature_cols),
+    num_nodes=graph['num_nodes'],
+    hidden_dim=64,
+    num_stgnn_blocks=3,
+    use_temporal_attention=False,
+    dropout=0.3
+)
+checkpoint = torch.load(MODEL_DIR, map_location=device, weights_only=False)
+# sd = checkpoint["model_state_dict"]
+
+# cur = model.state_dict()
+# for k, v in cur.items():
+#     if k not in sd:
+#         sd[k] = v  
+model.load_state_dict(checkpoint['model_state_dict'])
+model.to(device)
+model.eval()
+```
+
+```{python}
+# predict probabilities
+all_probs = []
+all_targets = []
+
+with torch.no_grad():
+    for batch in test_loader:
+        x = batch['x'].to(device)
+        y = batch['y'].to(device)
+        edge_index = batch['edge_index'].to(device)
+        edge_attr = batch['edge_attr'].to(device) if batch['edge_attr'] is not None else None
+        
+        outputs = model(x, edge_index, edge_attr)
+        probs = torch.sigmoid(outputs).cpu().numpy().flatten()
+        targets = y.cpu().numpy().flatten()
+        
+        all_probs.extend(probs)
+        all_targets.extend(targets)
+
+all_probs = np.array(all_probs)
+all_targets = np.array(all_targets)
+```
+
+```{python}
+# probability distribution
+fire_probs = all_probs[all_targets == 1]
+no_fire_probs = all_probs[all_targets == 0]
+
+print(f"\nAll sample:")
+print(f"  MIN: {all_probs.min():.4f}")
+print(f"  MAX: {all_probs.max():.4f}")
+print(f"  MEAN: {all_probs.mean():.4f}")
+print(f"  MEDIAN: {np.median(all_probs):.4f}")
+
+print(f"\nFire Sample (n={len(fire_probs):,}):")
+print(f"  MEAN: {fire_probs.mean():.4f}")
+print(f"  MEDIAN: {np.median(fire_probs):.4f}")
+print(f"  Range: [{fire_probs.min():.4f}, {fire_probs.max():.4f}]")
+
+print(f"\nNon-Fire Sample (n={len(no_fire_probs):,}):")
+print(f"  MEAN: {no_fire_probs.mean():.4f}")
+print(f"  MEDIAN: {np.median(no_fire_probs):.4f}")
+```
+
+```{python}
+# different threshold
+
+thresholds = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+best_f1 = 0
+best_threshold = 0.5
+
+for threshold in thresholds:
+    preds = (all_probs > threshold).astype(int)
+    
+    f1 = f1_score(all_targets, preds, zero_division=0)
+    prec = precision_score(all_targets, preds, zero_division=0)
+    rec = recall_score(all_targets, preds, zero_division=0)
+    
+    cm = confusion_matrix(all_targets, preds)
+    tn, fp, fn, tp = cm[0,0], cm[0,1], cm[1,0], cm[1,1]
+    
+    marker = " G" if f1 > best_f1 else ""
+    if f1 > best_f1:
+        best_f1 = f1
+        best_threshold = threshold
+    
+    print(f"{threshold:<8.2f} {f1:<8.4f} {prec:<8.4f} {rec:<8.4f} {tp:<8} {fp:<10,} {fn:<8}{marker}")
+```
+
+```{python}
+# use optimal
+print(f"\n" + "="*70)
+print(f"Optimal: {best_threshold:.2f}")
+print(f"MAX F1 Score: {best_f1:.4f}")
+print("="*70)
+
+best_preds = (all_probs > best_threshold).astype(int)
+cm = confusion_matrix(all_targets, best_preds)
+
+print(f"  TN={cm[0,0]:,}  FP={cm[0,1]:,}")
+print(f"  FN={cm[1,0]:,}  TP={cm[1,1]:,}")
+
+print(f"  Precision: {precision_score(all_targets, best_preds):.4f}")
+print(f"  Recall:    {recall_score(all_targets, best_preds):.4f}")
+print(f"  F1 Score:  {best_f1:.4f}")
+```
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+# prob dist
+axes[0].hist(fire_probs, bins=50, alpha=0.7, label='Fire', color='red', density=True)
+axes[0].hist(no_fire_probs, bins=50, alpha=0.7, label='No Fire', color='blue', density=True)
+axes[0].axvline(0.5, color='black', linestyle='--', linewidth=2, label='Default (0.5)')
+axes[0].axvline(best_threshold, color='crimson', linestyle='--', linewidth=2, 
+                label=f'Best ({best_threshold:.2f})')
+axes[0].set_xlabel('Predicted Probability', fontsize=18)
+axes[0].set_ylabel('Density', fontsize=18)
+# axes[0].set_title('Probability Distribution')
+axes[0].text(
+    -0.12, 1.05, 'A',
+    transform=axes[0].transAxes,
+    fontsize=20, fontweight='bold',
+    va='top', ha='left'
+)
+axes[0].tick_params(axis='both', labelsize=16)
+axes[0].legend(fontsize=17)
+axes[0].set_yscale('log')
+
+threshold_range = np.arange(0.05, 0.6, 0.01)
+f1_scores = []
+precisions = []
+recalls = []
+
+for t in threshold_range:
+    preds = (all_probs > t).astype(int)
+    f1_scores.append(f1_score(all_targets, preds, zero_division=0))
+    precisions.append(precision_score(all_targets, preds, zero_division=0))
+    recalls.append(recall_score(all_targets, preds, zero_division=0))
+
+axes[1].plot(threshold_range, f1_scores, 'o-', label='F1 Score', linewidth=2, markersize=3)
+axes[1].plot(threshold_range, precisions, 's-', label='Precision', linewidth=2, markersize=3)
+axes[1].plot(threshold_range, recalls, '^-', label='Recall', linewidth=2, markersize=3)
+axes[1].axvline(best_threshold, color='crimson', linestyle='--', linewidth=2, 
+                label=f'Best Threshold ({best_threshold:.2f})')
+axes[1].axvline(0.5, color='black', linestyle='--', linewidth=1, alpha=0.5)
+axes[1].set_xlabel('Threshold', fontsize=18)
+axes[1].set_ylabel('Score', fontsize=18)
+# axes[1].set_title('Performance vs Threshold')
+axes[1].text(
+    -0.12, 1.05, 'B',
+    transform=axes[1].transAxes,
+    fontsize=20, fontweight='bold',
+    va='top', ha='left'
+)
+axes[1].tick_params(axis='both', labelsize=16)
+axes[1].legend(fontsize=17)
+axes[1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig(f'{OUTPUT_DIR}/05_threshold_optimization.png', dpi=300, bbox_inches='tight')
+```
+
+```{python}
+# save
+config = {
+    'best_threshold': best_threshold,
+    'best_f1': best_f1,
+    'precision': precision_score(all_targets, best_preds),
+    'recall': recall_score(all_targets, best_preds),
+    'default_threshold_f1': f1_score(all_targets, (all_probs > 0.5).astype(int), zero_division=0)
+}
+
+import json
+with open(f'{OUTPUT_DIR}/best_threshold.json', 'w') as f:
+    json.dump(config, f, indent=2)
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

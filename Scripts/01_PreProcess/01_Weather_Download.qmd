@@ -1,0 +1,72 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+import os
+import sys
+import pandas as pd
+sys.path.append("/Users/henzhwang/Desktop/STA4101/Scripts/PreProcessed")
+
+from Weather_Downloader import ECCCWeatherDownloader
+```
+
+```{python}
+stations_df = pd.read_csv("./Data/Weather/climate-stations.csv")
+# stations_df['FIRST_DATE'] = pd.to_datetime(stations_df['FIRST_DATE'])
+# stations_df['LAST_DATE']  = pd.to_datetime(stations_df['LAST_DATE'])
+
+## search date
+start_date = '2019-01-01'
+end_date = '2024-12-31'
+
+## filtered useful stations
+stations_filtered = (
+    stations_df
+    .loc[:, ['STN_ID', 'STATION_NAME', 'CLIMATE_IDENTIFIER', 'PROV_STATE_TERR_CODE', 
+            'LATITUDE', 'LONGITUDE', 'FIRST_DATE', 'LAST_DATE']]
+    .rename(columns={'STN_ID': 'STATION_ID',
+                    'CLIMATE_IDENTIFIER': 'CLIMATE_ID',
+                    'PROV_STATE_TERR_CODE': 'PROVINCE/TERRITORY'})
+    .query('FIRST_DATE <= @start_date and LAST_DATE >= @end_date')
+    .query('`PROVINCE/TERRITORY` == "BC"')
+    .reset_index()
+)
+stations_filtered.shape
+```
+
+```{python}
+if __name__ == "__main__":
+    
+    print("\n" + "=" * 70)
+    # downloader
+    downloader = ECCCWeatherDownloader()
+    
+    # bulk download
+    print("Bulk Download Staions Record...")
+    
+    results = downloader.download_all_bc_stations(
+        stations_filtered,
+        start_year=2019,
+        end_year=2024,
+        output_dir='Processed Data/Weather/BC_weather_data'
+    )
+    
+    # merge
+    if results:
+        combined = downloader.merge_all_stations(
+            input_dir='Processed Data/Weather/BC_weather_data',
+            output_file='Processed Data/Weather/BC_all_stations_2019_2024.csv'
+        )
+        
+        # export GeoJSON
+        downloader.export_to_geojson(
+            csv_file='Processed Data/Weather/BC_all_stations_2019_2024.csv',
+            output_geojson='Processed Data/Weather/BC_weather_stations.geojson'
+        )
+    
+    print("\nAll Complete")
+    print("\n" + "=" * 70)
+```

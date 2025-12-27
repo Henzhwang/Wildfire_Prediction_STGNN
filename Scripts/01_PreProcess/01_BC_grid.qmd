@@ -1,0 +1,294 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+import os
+os.environ["OGR_GEOJSON_MAX_OBJ_SIZE"] = "0" 
+
+import geopandas as gpd
+import pandas as pd
+from shapely.geometry import box, Point
+import numpy as np
+```
+
+
+```{python}
+# BC range
+bc_bounds = {
+    'min_lon': -139.0,
+    'max_lon': -114.0,
+    'min_lat': 48.0,
+    'max_lat': 60.0
+}
+
+output_dir = 'Processed Data/Grid'
+os.makedirs(output_dir, exist_ok=True)
+```
+
+
+```{python}
+def create_bc_grids(cell_size=0.1, output_dir='bc_grids'):
+    """
+    Creating BC grids with no boundary file
+    
+    Parameters:
+    -----------
+    cell_size : float
+    - grid size: 0.1 approximately 10km
+    """
+    
+    print(f"Creating Grid of size: {cell_size} degree, appox {cell_size*111:.0f}km)...")
+    
+    grids = []
+    grid_id = 0
+    
+    # generating grid
+    lon = bc_bounds['min_lon']
+    while lon < bc_bounds['max_lon']:
+        lat = bc_bounds['min_lat']
+        while lat < bc_bounds['max_lat']:
+            
+            # box polygon
+            grid_box = box(lon, lat, lon + cell_size, lat + cell_size)
+            
+            # centroid
+            centroid_lon = lon + cell_size / 2
+            centroid_lat = lat + cell_size / 2
+            
+            grids.append({
+                'grid_id': f'G_{grid_id:05d}',
+                'geometry': grid_box,
+                'centroid_lon': centroid_lon,
+                'centroid_lat': centroid_lat,
+                'min_lon': lon,
+                'max_lon': lon + cell_size,
+                'min_lat': lat,
+                'max_lat': lat + cell_size
+            })
+            
+            grid_id += 1
+            lat += cell_size
+        
+        lon += cell_size
+    
+    # to GeoDataFrame
+    gdf = gpd.GeoDataFrame(grids, crs='EPSG:4326')
+    
+    print(f"{len(gdf)} grid generated")
+    
+    # save grid
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # to GeoJson
+    gdf.to_file(f'{output_dir}/BC_grids{cell_size}.geojson', driver='GeoJSON')
+    print(f"GeoJson saved: {output_dir}/BC_grids{cell_size}.geojson")
+
+    # to shape
+    gdf.to_file(f'{output_dir}/BC_grids{cell_size}.shp', driver='ESRI Shapefile')
+    print(f"ShapeFile saved: {output_dir}/BC_grids{cell_size}.shp")
+    
+    # save centroid points
+    grid_centers = pd.DataFrame({
+        'grid_id': gdf['grid_id'],
+        'lon': gdf['centroid_lon'],
+        'lat': gdf['centroid_lat']
+    })
+    
+    grid_centers.to_csv(f'{output_dir}/BC_grid_centroids{cell_size}.csv', index=False)
+    print(f"Centroids saved: {output_dir}/BC_grid_centroids{cell_size}.csv")
+    
+    # message
+    print(f"\Grid:")
+    print(f"  Total: {len(gdf)}")
+    print(f"  Longitude: {bc_bounds['min_lon']}, {bc_bounds['max_lon']}")
+    print(f"  Latitude: {bc_bounds['min_lat']}, {bc_bounds['max_lat']}")
+    print(f"  Size: {cell_size} degree (about {cell_size*111:.0f}km)")
+    
+    print(f"\nFirst five centroids:")
+    print(grid_centers.head())
+    
+    return gdf, grid_centers
+
+
+def create_bc_grids_with_boundary(boundary_file, cell_size=0.1, output_dir='bc_grids'):
+    """
+    Creating BC grids with boundary file
+    
+    Parameters:
+    -----------
+    boundary_file : str
+    - Boundary file in .geojson or .shp
+    cell_size : float
+    """
+    
+    print(f"Load Boundary: {boundary_file}")
+    bc_boundary = gpd.read_file(boundary_file)
+    
+    print(f"Creating Grid of size: {cell_size} degree, about {cell_size*111:.0f}km)...")
+    
+    # obtain range
+    bounds = bc_boundary.total_bounds  # (minx, miny, maxx, maxy)
+    
+    grids = []
+    grid_id = 0
+    
+    # generate
+    lon = bounds[0]
+    while lon < bounds[2]:
+        lat = bounds[1]
+        while lat < bounds[3]:
+            
+            grid_box = box(lon, lat, lon + cell_size, lat + cell_size)
+            
+            # Check if grid across/within Boundary
+            if bc_boundary.intersects(grid_box).any():
+                centroid = grid_box.centroid
+                
+                grids.append({
+                    'grid_id': f'G_{grid_id:05d}',
+                    'geometry': grid_box,
+                    'centroid_lon': centroid.x,
+                    'centroid_lat': centroid.y
+                })
+                
+                grid_id += 1
+            
+            lat += cell_size
+        lon += cell_size
+    
+    # to GeoDataFrame
+    gdf = gpd.GeoDataFrame(grids, crs='EPSG:4326')
+    
+    print(f"{len(gdf)} grid generated")
+    
+    # save
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # to GeoJson
+    gdf.to_file(f'{output_dir}/BC_grids_boundary{cell_size}.geojson', driver='GeoJSON')
+    print(f"GeoJson saved: {output_dir}/BC_grids_boundary{cell_size}.geojson")
+
+    # to shape
+    gdf.to_file(f'{output_dir}/BC_grids_boundary{cell_size}.shp', driver='ESRI Shapefile')
+    print(f"ShapeFile saved: {output_dir}/BC_grids_boundary{cell_size}.shp")
+    
+    # centroids
+    grid_centers = pd.DataFrame({
+        'grid_id': gdf['grid_id'],
+        'lon': gdf['centroid_lon'],
+        'lat': gdf['centroid_lat']
+    })
+    
+    grid_centers.to_csv(f'{output_dir}/BC_grids_boundary_centroids{cell_size}.csv', index=False)
+    print(f"Centroids saved: {output_dir}/BC_grids_boundary_centroids{cell_size}.csv")
+    
+    return gdf, grid_centers
+
+
+def visualize_grids(grid_file, grid_num = None, 
+                    output_html='BC_grids_map.html'):
+    """
+    Visualize Grid
+    """
+    import folium
+    
+    print("Generating grid map...")
+    
+    # gdf = gpd.read_file(grid_file)
+    gdf = grid_file
+
+    if grid_num is None:
+        grid_num = grid_file.shape[0]
+    
+    # creating map 
+    m = folium.Map(location=[54, -125], zoom_start=5)
+    
+    # add grid
+    for idx, row in gdf.head(grid_num).iterrows():
+        # grid boundary
+        folium.GeoJson(
+            row['geometry'],
+            style_function=lambda x: {
+                'fillColor': 'blue',
+                'color': 'blue',
+                'weight': 1,
+                'fillOpacity': 0.1
+            }
+        ).add_to(m)
+        
+        # centroids
+        folium.CircleMarker(
+            location=[row['centroid_lat'], row['centroid_lon']],
+            radius=2,
+            color='red',
+            fill=True,
+            popup=row['grid_id']
+        ).add_to(m)
+    
+    m.save(output_html)
+    print(f"Map saved: {output_html}")
+```
+
+
+```{python}
+bound_dir = "Processed Data/Boundary/BC/BC_boundary.geojson"
+
+if __name__ == "__main__":
+    
+    print("=" * 60)
+    print("Grid Generation")
+    print("=" * 60)
+    
+    size10 = 0.1
+    size25 = 0.25
+    #
+    print("\nSimple Grid:")
+    gdf, centers = create_bc_grids(cell_size=size25, 
+                output_dir=f'{output_dir}/Simple{size25}')
+    
+    #
+    print("\nGrid with Boundary:")
+    gdf, centers = create_bc_grids_with_boundary(
+        bound_dir,
+        cell_size=size25,
+        output_dir=f'{output_dir}/STATCAN{size25}'
+    )
+
+    # ## 0.1
+    # print("\nSimple Grid:")
+    # gdf, centers = create_bc_grids(cell_size=size10, 
+    #             output_dir=f'{output_dir}/Simple{size10}')
+    
+    # #
+    # print("\nGrid with Boundary:")
+    # gdf, centers = create_bc_grids_with_boundary(
+    #     bound_dir,
+    #     cell_size=size10,
+    #     output_dir=f'{output_dir}/STATCAN{size10}'
+    # )
+    
+    print("\n" + "=" * 60)
+    print("Complete!")
+    print("=" * 60)
+```
+
+
+Visualize
+```{python}
+map_dir = 'Output/Grid/Map/'
+sp_map_dir = f'{map_dir}/BC_grid_map.html'
+
+sp_grid = gpd.read_file('Processed Data/Grid/Simple0.25/BC_grids0.25.geojson')
+visualize_grids(sp_grid, output_html=sp_map_dir)
+```
+```{python}
+sp_bound_map_dir = f'{map_dir}/BC_grid_bound_map.html'
+
+sp_bound_grid = gpd.read_file('Processed Data/Grid/STATCAN0.25/BC_grids_boundary0.25.geojson')
+visualize_grids(sp_bound_grid, output_html=sp_bound_map_dir)
+```

@@ -1,0 +1,236 @@
+---
+title: "Daily Weather From Stations"
+format: html
+---
+
+```{python}
+# pip install earthengine-api
+# pip install pandas geopandas numpy
+
+import ee
+import pandas as pd
+from datetime import datetime, timedelta
+import time
+```
+```{python}
+## Initialize google earth engine
+# ee.Authenticate()
+ee.Initialize(project='ee-henryhwang2001')
+print(f"Google Earth Engine Connected...")
+```
+
+```{python}
+bc_bounds = ee.Geometry.Rectangle([-139, 48, -114, 60])
+
+output_dir = 'bc_modis_data'
+os.makedirs(output_dir, exist_ok=True)
+```
+
+```{python}
+# Yearly NDVI
+
+def download_modis_ndvi(start_date='2019-01-01', end_date='2024-12-31'):
+    """
+    Download MODIS NDVI 16 days combined data from GEE
+    """
+    print("Downloding MODIS NDVI...")
+    
+    # Load MODIS NDVI
+    modis_ndvi = ee.ImageCollection('MODIS/061/MOD13A2') \
+        .filterDate(start_date, end_date) \
+        .filterBounds(bc_bounds) \
+        .select('NDVI')
+    
+    print(f"Found {modis_ndvi.size().getInfo()} images")
+    
+    # Extract to GeoTIFF by year
+    for year in range(2019, 2025):
+        year_start = f'{year}-01-01'
+        year_end = f'{year}-12-31'
+        
+        # compute yearly average NDVI
+        yearly_ndvi = modis_ndvi \
+            .filterDate(year_start, year_end) \
+            .mean() \
+            .clip(bc_bounds)
+        
+        # extract
+        task = ee.batch.Export.image.toDrive(
+            image=yearly_ndvi,
+            description=f'BC_NDVI_{year}',
+            folder='MODIS_BC',
+            fileNamePrefix=f'bc_ndvi_{year}',
+            region=bc_bounds,
+            scale=1000,  # 1km
+            maxPixels=1e9
+        )
+        
+        task.start()
+        print(f"Yearly NDVI Task started")
+    
+    print("Check progress: https://code.earthengine.google.com/tasks")
+
+
+# Download landcover
+
+def download_modis_landcover(year=2019):
+
+    print(f"Downloading {year} Landcover...")
+    
+    # load data
+    landcover = ee.ImageCollection('MODIS/061/MCD12Q1') \
+        .filterDate(f'{year}-01-01', f'{year}-12-31') \
+        .first() \
+        .select('LC_Type1') \
+        .clip(bc_bounds)
+    
+    # extract
+    task = ee.batch.Export.image.toDrive(
+        image=landcover,
+        description=f'BC_LandCover_{year}',
+        folder='MODIS_BC',
+        fileNamePrefix=f'bc_landcover_{year}',
+        region=bc_bounds,
+        scale=500,  # 500m
+        maxPixels=1e9,
+        crs='EPSG:4326'
+    )
+    
+    task.start()
+    print(f"{year} landcover Task started")
+
+    print("Check progress: https://code.earthengine.google.com/tasks")
+
+
+
+# Monthly NDVI
+
+def download_monthly_ndvi(start_date='2019-01-01', end_date='2024-12-31'):
+
+    print("Downloading Monthly NDVI...")
+    
+    # load
+    modis_ndvi = ee.ImageCollection('MODIS/061/MOD13A2') \
+        .filterDate(start_date, end_date) \
+        .filterBounds(bc_bounds) \
+        .select('NDVI')
+    
+
+    
+    def monthly_mean(year, month):
+        start = ee.Date.fromYMD(year, month, 1)
+        end = start.advance(1, 'month')
+        
+        monthly = modis_ndvi \
+            .filterDate(start, end) \
+            .mean() \
+            .clip(bc_bounds) \
+            .set('year', year) \
+            .set('month', month)
+        
+        return monthly
+    
+    # generate combination
+    months = []
+    for year in range(2019, 2025):
+        for month in range(1, 13):
+            months.append((year, month))
+    
+    monthly_collection = ee.ImageCollection([
+        monthly_mean(year, month) for year, month in months
+    ])
+    
+    # extract
+    for year in range(2019, 2025):
+        yearly_monthly = monthly_collection.filter(
+            ee.Filter.eq('year', year)
+        )
+        
+        monthly_stack = yearly_monthly.toBands()
+        
+        task = ee.batch.Export.image.toDrive(
+            image=monthly_stack,
+            description=f'BC_NDVI_Monthly_{year}',
+            folder='MODIS_BC',
+            fileNamePrefix=f'bc_ndvi_monthly_{year}',
+            region=bc_bounds,
+            scale=1000,
+            maxPixels=1e9
+        )
+        
+        task.start()
+        print(f"Monthly NDVI Task started")
+
+        print("Check progress: https://code.earthengine.google.com/tasks")
+```
+
+```{python}
+if __name__ == "__main__":
+    
+    print("=" * 60)
+    print("Download BC NDVI data...")
+    print("=" * 60)
+    
+    # Data 1: Yearly average NDVI
+    print("\nTask 1")
+    download_modis_ndvi()
+    
+    # Data 2: Land cover
+    print("\nTask 2: Landcover")
+    download_modis_landcover(year=2022)  
+
+
+    # Data 4: Monthly NDVI
+    download_monthly_ndvi()
+    
+    print("\n" + "=" * 60)
+    print("Complete!")
+    print("Check progress: https://code.earthengine.google.com/tasks")
+    print("Location: Google Drive > MODIS_BC")
+    print("=" * 60)
+```
+
+```{python}
+download_modis_landcover(year=2022)
+```
+
+```{python}
+download_monthly_ndvi()
+```
+
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```

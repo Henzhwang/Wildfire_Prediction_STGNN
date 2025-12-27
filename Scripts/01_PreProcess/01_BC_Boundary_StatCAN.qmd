@@ -1,0 +1,116 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+import geopandas as gpd
+import requests
+import os
+```
+
+
+```{python}
+output_dir = 'Output/Boundary/BC'
+os.makedirs(output_dir, exist_ok=True)
+```
+
+
+```{python}
+def download_bc_boundary():
+
+    print("\nDownload BC Boundary...")
+    
+    # URL from Statistics Canada
+    url = "https://www12.statcan.gc.ca/census-recensement/2021/geo/sip-pis/boundary-limites/files-fichiers/lpr_000b21a_e.zip"
+    
+    print("From Statistics Canada...")
+    
+    # download zip file
+    response = requests.get(url, timeout=60)
+    zip_path = f'{output_dir}/canada_provinces.zip'
+    
+    with open(zip_path, 'wb') as f:
+        f.write(response.content)
+    
+    print(f"Downloaded to: {zip_path}")
+    
+    # unzip and extract
+    import zipfile
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(output_dir)
+    
+    # read shapefile
+    # print(os.listdir(output_dir))
+    shp_files = [f for f in os.listdir(output_dir) if f.endswith('.shp')]
+    # print(shp_files)
+    if shp_files:
+        gdf = gpd.read_file(f'{output_dir}/{shp_files[0]}')
+        
+        # print(gdf.head())
+        # print(gdf.columns)
+        # print(gdf['PRENAME'].unique())
+        ## filter
+        bc = gdf[gdf['PRENAME'] == 'British Columbia']
+        # print(f'___')
+        # print(bc.head())
+        
+        ## convert crs
+        if bc.crs is None:
+            bc = bc.set_crs('EPSG:4269')
+        elif bc.crs.to_epsg() != 4269:
+            bc = bc.to_crs('EPSG:4269')
+        
+        # save
+        bc.to_file(f'{output_dir}/BC_boundary.geojson', driver='GeoJSON')
+        bc.to_file(f'{output_dir}/BC_boundary.shp', driver='ESRI Shapefile')
+        
+        print(f"Boundary Saved:")
+        print(f"  - {output_dir}/BC_boundary.geojson")
+        print(f"  - {output_dir}/BC_boundary.shp")
+        
+        return bc
+
+```
+
+
+```{python}
+if __name__ == "__main__":
+    
+    print("=" * 60)
+    print("Download Boundary Data")
+    print("=" * 60)
+    
+    download_bc_boundary()
+    
+    print("\n" + "=" * 60)
+    print("Complete！")
+    print(f"Data Location: {output_dir}/")
+    print("\File List:")
+    print("  - bc_boundary.geojson (BC Boundary)")
+    print("=" * 60)
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```

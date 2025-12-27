@@ -1,0 +1,258 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import geopandas as gpd
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+```
+
+
+## Load Dataset
+```{python}
+fire_points = gpd.read_file('/Users/henzhwang/Desktop/STA4101/Processed Data/Fire Points/Fire Points.shp')
+```
+
+```{python}
+# fire_points.head()
+fire_points.columns
+# fire_points.crs
+```
+
+```{python}
+# fire_points = fire_points.to_crs('EPSG:4326')
+```
+
+## Check
+```{python}
+print("=" * 70)
+print("Data Completely Check")
+print("=" * 70)
+
+
+print(f"\nTotal Record: {len(fire_points):,}")
+print(f"CRS: {fire_points.crs}")
+print(f"Time Range: {fire_points['YEAR'].min()}-{fire_points['YEAR'].max()}")
+
+# Missing Value
+print("\nKey Column Missing value:")
+key_fields = ['YEAR', 'MONTH', 'DAY', 'LATITUDE', 'LONGITUDE', 
+              'SIZE_HA', 'CAUSE', 'FIRE_TYPE', 'REP_DATE']
+
+missing_stats = []
+for field in key_fields:
+    if field in fire_points.columns:
+        missing_count = fire_points[field].isnull().sum()
+        missing_pct = missing_count / len(fire_points) * 100
+        missing_stats.append({
+            'Field': field,
+            'Missing': missing_count,
+            'Percentage': f'{missing_pct:.2f}%'
+        })
+
+missing_df = pd.DataFrame(missing_stats)
+print(missing_df.to_string(index=False))
+
+# Any zero or negative
+print("\nRange column value:")
+print(f"  SIZE_HA: [{fire_points['SIZE_HA'].min():.2f}, {fire_points['SIZE_HA'].max():.2f}]")
+print(f"  SIZE_HA=0: {(fire_points['SIZE_HA'] == 0).sum()}")
+print(f"  SIZE_HA<0: {(fire_points['SIZE_HA'] < 0).sum()}")
+print(f"  SIZE_HA missing: {fire_points['SIZE_HA'].isnull().sum()}")
+```
+
+
+```{python}
+print("\n" + "=" * 70)
+print("Temporal columns")
+print("=" * 70)
+
+# year distribution
+print("\nYearly Distribution:")
+print(fire_points['YEAR'].value_counts().sort_index())
+
+# print(fire_points[['YEAR', 'MONTH']].value_counts().sort_index())
+
+# Check if month between 1-12
+print("\nMonthly :")
+invalid_months = fire_points[(fire_points['MONTH'] < 1) | (fire_points['MONTH'] > 12)]
+print(f"  Invalid Month: {len(invalid_months)}")
+if len(invalid_months) > 0:
+    print(f"  Invalid value: {invalid_months['MONTH'].unique()}")
+
+# Check if date between 1-31
+print("\nDate Check:")
+invalid_days = fire_points[(fire_points['DAY'] < 1) | (fire_points['DAY'] > 31)]
+print(f"  Invalid date: {len(invalid_days)}")
+
+# Date combination
+## Check if NA exists
+try:
+    fire_points['date'] = pd.to_datetime(
+        fire_points[['YEAR', 'MONTH', 'DAY']].rename(
+            columns={'YEAR': 'year', 'MONTH': 'month', 'DAY': 'day'}
+        ),
+        errors='coerce'
+    )
+    
+    print(f"\nDate combination:")
+    print(f"  Effective: {fire_points['date'].notna().sum()}")
+    print(f"  Defective: {fire_points['date'].isna().sum()}")
+    print(f"  Range: {fire_points['date'].min()} to {fire_points['date'].max()}")
+    
+except Exception as e:
+    print(f"\Failed: {e}")
+
+# Future Date
+if 'date' in fire_points.columns:
+    future_fires = fire_points[fire_points['date'] > pd.Timestamp.now()]
+    print(f"\nFuture Date: {len(future_fires)}")
+```
+
+
+```{python}
+print("\n" + "=" * 70)
+print("Spatial columns")
+print("=" * 70)
+
+# Range check
+print("\nCoordinate Range:")
+print(f"  LATITUDE: [{fire_points['LATITUDE'].min():.4f}, {fire_points['LATITUDE'].max():.4f}]")
+print(f"  LONGITUDE: [{fire_points['LONGITUDE'].min():.4f}, {fire_points['LONGITUDE'].max():.4f}]")
+
+# BC range
+bc_lat_range = (48, 60)
+bc_lon_range = (-140, -114)
+
+# Check if coordinates within BC range
+print("\nRange Validation:")
+outside_bc_lat = fire_points[(fire_points['LATITUDE'] < bc_lat_range[0]) | 
+                       (fire_points['LATITUDE'] > bc_lat_range[1])]
+outside_bc_lon = fire_points[(fire_points['LONGITUDE'] < bc_lon_range[0]) | 
+                       (fire_points['LONGITUDE'] > bc_lon_range[1])]
+
+print(f"  Latitude Outside: {len(outside_bc_lat)}")
+print(f"  Lontitude Outside: {len(outside_bc_lon)}")
+
+if len(outside_bc_lat) > 0 or len(outside_bc_lon) > 0:
+    print(" Fire points might outside BC")
+
+# Check if coordinates are consistency in shape file
+if 'geometry' in fire_points.columns:
+    print("\nConsistency Check:")
+    # create temp column
+    fire_points['geom_lon'] = fire_points.geometry.x
+    fire_points['geom_lat'] = fire_points.geometry.y
+    
+    lon_diff = abs(fire_points['LONGITUDE'] - fire_points['geom_lon'])
+    lat_diff = abs(fire_points['LATITUDE'] - fire_points['geom_lat'])
+    
+    inconsistent = fire_points[(lon_diff > 0.001) | (lat_diff > 0.001)]
+    print(f"  Coordinate Inconsistence: {len(inconsistent)}")
+    
+    # remove temp column
+    fire_points.drop(['geom_lon', 'geom_lat'], axis=1, inplace=True)
+```
+
+
+```{python}
+print("\n" + "=" * 70)
+print("Categorical Columns")
+print("=" * 70)
+
+# 1. CAUSE 
+print("\nFire Causes:")
+print(fire_points['CAUSE'].value_counts())
+print(f"  #Unique values: {fire_points['CAUSE'].nunique()}")
+
+print(fire_points['CAUSE2'].value_counts())
+print(f"  #Unique values: {fire_points['CAUSE2'].nunique()}")
+
+# 2. FIRE_TYPE 
+print("\nFIRE_TYPE:")
+print(fire_points['FIRE_TYPE'].value_counts())
+
+# 3. Large_Fire 
+print("\nLarge_Fire:")
+print(fire_points['Large_Fire'].value_counts())
+
+# 4. PRESCRIBED - 是否计划烧除
+print("\nPRESCRIBED:")
+print(fire_points['PRESCRIBED'].value_counts())
+
+# 5. Source Agency
+print("\nSRC_AGENCY:")
+print(fire_points['SRC_AGENCY'].value_counts())
+```
+
+
+```{python}
+print("\n" + "=" * 70)
+print("Fire Sizes")
+print("=" * 70)
+
+# basic stats
+print("\nSize in hectare:")
+print(fire_points['SIZE_HA'].describe())
+
+# Fire size level
+fire_points['size_class'] = pd.cut(
+    fire_points['SIZE_HA'],
+    bins=[0, 0.1, 1, 10, 100, 1000, float('inf')],
+    labels=['<0.1 ha', '0.1-1 ha', '1-10 ha', '10-100 ha', '100-1000 ha', '>1000 ha']
+)
+
+print("\nFire Scale:")
+print(fire_points['size_class'].value_counts().sort_index())
+
+# Check extreme values
+print("\nExtreme values (Largest Fire):")
+print(f"  Size: {fire_points['SIZE_HA'].max():.2f} ha")
+largest_fire = fire_points.loc[fire_points['SIZE_HA'].idxmax()]
+if 'FIRENAME' in fire_points.columns:
+    print(f"  Name: {largest_fire['FIRENAME']}")
+print(f"  Year: {largest_fire['YEAR']}")
+
+# Large Fires
+large_fires = fire_points[fire_points['SIZE_HA'] > 200]
+print(f"\nLarge Fire (> 200 ha):")
+print(f"  #: {len(large_fires)}")
+print(f"  Proportion: {len(large_fires)/len(fire_points)*100:.2f}%")
+print(f"  Total size: {large_fires['SIZE_HA'].sum():.0f} ha")
+print(f"  Proportion of Total size: {large_fires['SIZE_HA'].sum()/fire_points['SIZE_HA'].sum()*100:.1f}%")
+```
+
+```{python}
+print("\n" + "=" * 70)
+print("Data duplication")
+print("=" * 70)
+
+# fire ID
+if 'FIRE_ID' in fire_points.columns:
+    duplicates_id = fire_points[fire_points.duplicated(subset=['FIRE_ID'], keep=False)]
+    print(f"\nFIRE_ID repeated: {len(duplicates_id)}")
+
+# NFDBFIREID
+if 'NFDBFIREID' in fire_points.columns:
+    duplicates_nfdb = fire_points[fire_points.duplicated(subset=['NFDBFIREID'], keep=False)]
+    print(f"NFDBFIREID repeated: {len(duplicates_nfdb)}")
+
+# Spatial Location (same day and same locaion)
+duplicates_spatiotemporal = fire_points[
+    fire_points.duplicated(subset=['YEAR', 'MONTH', 'DAY', 'LATITUDE', 'LONGITUDE'], keep=False)
+]
+print(f"Spatial repeated: {len(duplicates_spatiotemporal)}")
+print(f"    {duplicates_spatiotemporal.head()}")
+```
+
+```{python}
+
+```
+
+```{python}
+
+```

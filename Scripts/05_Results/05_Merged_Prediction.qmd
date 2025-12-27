@@ -1,0 +1,336 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import sys
+import os
+import re
+import glob
+import torch
+from tqdm import tqdm
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+from sklearn.metrics import f1_score, precision_score, recall_score, confusion_matrix
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+sys.path.append("/Users/henzhwang/Desktop/STA4101/Scripts/04_Models")
+
+from graph_builder import BCFireGraphBuilder
+from stgnn_model import BCWildfireSTGNN
+from data_loader import TemporalSplit, create_dataloaders
+```
+
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+DATA_DIR = PROJECT_ROOT/'Processed Data'/'grid_all_neighbors.parquet'
+STANDARD_DIR = PROJECT_ROOT/'Output'/'Model Run'/'Standard'
+STANDARD_SEQ21_DIR = PROJECT_ROOT/'Output'/'Model Run'/'Standard_seq21'
+STANDARD_SEQ7_DIR = PROJECT_ROOT/'Output'/'Model Run'/'Standard_seq7'
+STANDARD_EPO50_DIR = PROJECT_ROOT/'Output'/'Model Run'/'Standard_epo50'
+REDUCED_DIR = PROJECT_ROOT/'Output'/'Model Run'/'Standard_reduced'
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve().parents[1]  
+DATA_DIR = PROJECT_ROOT / 'Processed Data' / 'grid_all_neighbors.parquet'
+
+# Model directories
+MODEL_DIRS = {
+    'Standard': STANDARD_DIR,
+    'Seq21': STANDARD_SEQ21_DIR,
+    'Seq7': STANDARD_SEQ7_DIR,
+    'Epo50': STANDARD_EPO50_DIR,
+    'Reduced': PROJECT_ROOT / 'Output' / 'Model Run' / 'Standard_reduced'
+}
+
+OUTPUT_DIR = PROJECT_ROOT / 'Output' / 'Model Run' / 'Merged'
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+```
+
+
+```{python}
+df_all = pd.read_parquet(DATA_DIR)
+
+# Filter test set
+print("Filtering test set (2024-01-22 onwards)...")
+df_all['Date'] = pd.to_datetime(df_all['Date'])
+df_test = df_all[df_all['Date'] >= '2024-01-22'].copy()
+
+# Convert date to string for merging
+df_test['Date'] = df_test['Date'].dt.strftime('%Y-%m-%d')
+
+# Select and prepare ground truth columns
+ground_truth = df_test[['Date', 'grid_id', 'centroid_lon', 'centroid_lat', 'Fire_occurred']].copy()
+ground_truth = ground_truth.sort_values(['Date', 'grid_id']).reset_index(drop=True)
+
+print(f"Ground truth loaded:")
+print(f"   Total records: {len(ground_truth):,}")
+print(f"   Date range: {ground_truth['Date'].min()} to {ground_truth['Date'].max()}")
+print(f"   Unique dates: {ground_truth['Date'].nunique()}")
+print(f"   Unique grids: {ground_truth['grid_id'].nunique()}")
+print(f"   Fire occurrences: {ground_truth['Fire_occurred'].sum():,} ({ground_truth['Fire_occurred'].mean():.2%})")
+print()
+```
+
+```{python}
+model_probs = {}
+model_preds = {}
+
+for model_name, model_dir in MODEL_DIRS.items():
+    pred_file = model_dir / 'predictions.csv'
+    
+    if not pred_file.exists():
+        print(f"{model_name}: File not found at {pred_file}\n")
+        continue
+    
+    print(f"Loading {model_name}...")
+    
+    # Load predictions
+    pred_df = pd.read_csv(pred_file)
+    
+    # Ensure Date is string
+    pred_df['Date'] = pred_df['Date'].astype(str)
+    
+    # Filter to 2024-01-22 onwards only
+    pred_df['Date_dt'] = pd.to_datetime(pred_df['Date'])
+    pred_df = pred_df[pred_df['Date_dt'] >= '2024-01-22'].copy()
+    pred_df = pred_df.drop('Date_dt', axis=1)
+    
+    # Verify required columns
+    if not all(col in pred_df.columns for col in ['Date', 'grid_id', 'fire_probability', 'fire_prediction']):
+        print(f"  Missing required columns, skipping...\n")
+        continue
+    
+    # Store probabilities
+    prob_df = pred_df[['Date', 'grid_id', 'fire_probability']].copy()
+    prob_df = prob_df.rename(columns={'fire_probability': f'{model_name}_prob'})
+    model_probs[model_name] = prob_df
+    
+    # Store predictions
+    pred_df_binary = pred_df[['Date', 'grid_id', 'fire_prediction']].copy()
+    pred_df_binary = pred_df_binary.rename(columns={'fire_prediction': f'{model_name}_pred'})
+    model_preds[model_name] = pred_df_binary
+    
+    print(f"   Loaded: {len(pred_df):,} records")
+    print(f"      Date range: {pred_df['Date'].min()} to {pred_df['Date'].max()}")
+    print(f"      Unique dates: {pred_df['Date'].nunique()}")
+    print(f"      Mean probability: {pred_df['fire_probability'].mean():.4f}")
+    print(f"      Fire predictions (1): {pred_df['fire_prediction'].sum():,}")
+    print()
+
+if not model_probs:
+    print("No model predictions loaded! Exiting.")
+    raise SystemExit
+
+print(f"Total models loaded: {len(model_probs)}\n")
+```
+
+```{python}
+# Start with ground truth
+probabilities_df = ground_truth.copy()
+print(f"Starting with ground truth: {len(probabilities_df):,} rows\n")
+
+# Merge each model's probabilities
+for model_name, prob_df in model_probs.items():
+    before_merge = len(probabilities_df)
+    
+    print(f"Merging {model_name} probabilities...")
+    
+    probabilities_df = probabilities_df.merge(
+        prob_df,
+        on=['Date', 'grid_id'],
+        how='left'
+    )
+    
+    after_merge = len(probabilities_df)
+    missing_count = probabilities_df[f'{model_name}_prob'].isna().sum()
+    
+    print(f"   Rows after merge: {after_merge:,}")
+    print(f"   Missing values: {missing_count:,}")
+    
+    if after_merge != before_merge:
+        print(f"  WARNING: Row count changed by {after_merge - before_merge:+,}")
+    
+    print()
+
+print(f"Probabilities DataFrame created: {probabilities_df.shape}\n")
+```
+
+```{python}
+predictions_df = ground_truth.copy()
+print(f"Starting with ground truth: {len(predictions_df):,} rows\n")
+
+# Merge each model's predictions
+for model_name, pred_df in model_preds.items():
+    before_merge = len(predictions_df)
+    
+    print(f"Merging {model_name} predictions...")
+    
+    predictions_df = predictions_df.merge(
+        pred_df,
+        on=['Date', 'grid_id'],
+        how='left'
+    )
+    
+    after_merge = len(predictions_df)
+    missing_count = predictions_df[f'{model_name}_pred'].isna().sum()
+    
+    print(f"   Rows after merge: {after_merge:,}")
+    print(f"   Missing values: {missing_count:,}")
+    
+    if after_merge != before_merge:
+        print(f"  WARNING: Row count changed by {after_merge - before_merge:+,}")
+    
+    print()
+
+print(f"Predictions DataFrame created: {predictions_df.shape}\n")
+```
+
+```{python}
+# Get probability and prediction columns
+prob_cols = [f'{model}_prob' for model in model_probs.keys()]
+pred_cols = [f'{model}_pred' for model in model_preds.keys()]
+
+
+print("Probabilities Dataset:")
+before_clean = len(probabilities_df)
+has_all_probs = probabilities_df[prob_cols].notna().all(axis=1)
+probabilities_df = probabilities_df[has_all_probs].copy()
+after_clean = len(probabilities_df)
+
+print(f"   Before: {before_clean:,} rows")
+print(f"   After:  {after_clean:,} rows")
+print(f"   Removed: {before_clean - after_clean:,} rows ({(before_clean - after_clean)/before_clean*100:.2f}%)")
+print()
+
+
+
+
+before_clean = len(predictions_df)
+has_all_preds = predictions_df[pred_cols].notna().all(axis=1)
+predictions_df = predictions_df[has_all_preds].copy()
+after_clean = len(predictions_df)
+
+print(f"   Before: {before_clean:,} rows")
+print(f"   After:  {after_clean:,} rows")
+print(f"   Removed: {before_clean - after_clean:,} rows ({(before_clean - after_clean)/before_clean*100:.2f}%)")
+print()
+
+# Verify both datasets have the same rows
+if len(probabilities_df) != len(predictions_df):
+    print("WARNING: Probabilities and Predictions have different row counts!")
+    print(f"   Probabilities: {len(probabilities_df):,}")
+    print(f"   Predictions: {len(predictions_df):,}")
+    print("   Aligning datasets to common rows...")
+    
+    # Keep only common Date-grid_id pairs
+    prob_keys = set(zip(probabilities_df['Date'], probabilities_df['grid_id']))
+    pred_keys = set(zip(predictions_df['Date'], predictions_df['grid_id']))
+    common_keys = prob_keys & pred_keys
+    
+    probabilities_df = probabilities_df[
+        probabilities_df.apply(lambda x: (x['Date'], x['grid_id']) in common_keys, axis=1)
+    ].copy()
+    predictions_df = predictions_df[
+        predictions_df.apply(lambda x: (x['Date'], x['grid_id']) in common_keys, axis=1)
+    ].copy()
+    
+    print(f"   Aligned to {len(probabilities_df):,} common rows")
+    print()
+else:
+    print(f"Both datasets have {len(probabilities_df):,} rows\n")
+```
+
+
+```{python}
+probabilities_df = probabilities_df.sort_values(['Date', 'grid_id']).reset_index(drop=True)
+predictions_df = predictions_df.sort_values(['Date', 'grid_id']).reset_index(drop=True)
+```
+
+```{python}
+# Save probabilities
+prob_output = OUTPUT_DIR / 'model_probabilities.csv'
+print(f"Saving probabilities to: {prob_output}")
+probabilities_df.to_csv(prob_output, index=False)
+prob_size = prob_output.stat().st_size / (1024 * 1024)
+print(f"Probabilities saved!")
+print(f"   Records: {len(probabilities_df):,}")
+print(f"   Columns: {len(probabilities_df.columns)}")
+print(f"   File size: {prob_size:.2f} MB")
+print()
+
+# Save predictions
+pred_output = OUTPUT_DIR / 'model_predictions.csv'
+print(f"Saving predictions to: {pred_output}")
+predictions_df.to_csv(pred_output, index=False)
+pred_size = pred_output.stat().st_size / (1024 * 1024)
+print(f"Predictions saved!")
+print(f"   Records: {len(predictions_df):,}")
+print(f"   Columns: {len(predictions_df.columns)}")
+print(f"   File size: {pred_size:.2f} MB")
+print()
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

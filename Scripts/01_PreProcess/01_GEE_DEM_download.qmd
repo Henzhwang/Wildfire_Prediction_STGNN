@@ -1,0 +1,116 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import ee
+import geemap
+import geopandas as gpd
+import requests
+import os
+```
+
+```{python}
+ee.Initialize(project='ee-henryhwang2001')
+print(f"Google Earth Engine Connected...")
+```
+
+```{python}
+output_dir = 'Processed Data/DEM'
+os.makedirs(output_dir, exist_ok=True)
+
+# BC range
+bc_bounds = ee.Geometry.Rectangle([-139, 48, -114, 60])
+```
+
+
+```{python}
+def download_dem():
+    """Download DEM data to Drive"""
+    
+    print("Preparing download DEM data...")
+    
+    # load DEM
+    dem = ee.Image('USGS/SRTMGL1_003').clip(bc_bounds)
+    
+    # 1. extract elevation
+    task1 = ee.batch.Export.image.toDrive(
+        image=dem,
+        description='BC_Elevation',
+        folder='BC_DEM',
+        fileNamePrefix='bc_elevation',
+        region=bc_bounds,
+        scale=90,
+        maxPixels=1e10,  # pixel limit
+        crs='EPSG:4326'
+    )
+    task1.start()
+    print("Elevation task started")
+    
+    # 2. slope
+    slope = ee.Terrain.slope(dem)
+    task2 = ee.batch.Export.image.toDrive(
+        image=slope,
+        description='BC_Slope',
+        folder='BC_DEM',
+        fileNamePrefix='bc_slope',
+        region=bc_bounds,
+        scale=90,
+        maxPixels=1e10,
+        crs='EPSG:4326'
+    )
+    task2.start()
+    print("Slope task started")
+    
+    # 3. aspect
+    aspect = ee.Terrain.aspect(dem)
+    task3 = ee.batch.Export.image.toDrive(
+        image=aspect,
+        description='BC_Aspect',
+        folder='BC_DEM',
+        fileNamePrefix='bc_aspect',
+        region=bc_bounds,
+        scale=90,
+        maxPixels=1e10,
+        crs='EPSG:4326'
+    )
+    task3.start()
+    print("Aspect task started")
+    
+    print("\n" + "=" * 60)
+    print("\nCheck Progress: https://code.earthengine.google.com/tasks")
+    print("=" * 60)
+```
+
+```{python}
+if __name__ == "__main__":
+    
+    print("=" * 60)
+    print("Download DEM data")
+    print("=" * 60)
+    
+    download_dem()
+    
+    print("\n" + "=" * 60)
+    print("Complete")
+    print("=" * 60)
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```
+```{python}
+
+```

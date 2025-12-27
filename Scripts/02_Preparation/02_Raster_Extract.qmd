@@ -1,0 +1,356 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import sys
+import os
+import geopandas as gpd
+import pandas as pd
+import os
+# os.chdir("/Users/henzhwang/Desktop/STA4101")
+
+sys.path.append("/Users/henzhwang/Desktop/STA4101/Scripts/02_Preparation")
+
+from RasterExtractor import (
+    Config, 
+    ERA5Extractor, 
+    NDVIExtractor,
+    DEMExtractor,
+    LandcoverExtractor
+)
+```
+
+```{python}
+print("Loading Grids...")
+grids = gpd.read_file(Config.GRID_FILE)
+# grids = gpd.read_file('Processed Data/Grid/STATCAN0.25/BC_grids_boundary0.25.geojson')
+# grids = gpd.read_file('/Users/henzhwang/Desktop/STA4101/Processed Data/Grid/STATCAN0.25/BC_grids_boundary0.25.geojson')
+print(f"   #: {len(grids)}")
+print(f"   CRS: {grids.crs}")
+```
+
+
+## ERA5
+
+```{python}
+ERA5_VARIABLES = [
+    'temperature_2m',
+    'temperature_2m_max',
+    'temperature_2m_min',
+    'dewpoint_temperature_2m',
+    'skin_temperature',
+    'total_precipitation_sum',
+    'surface_runoff_sum',
+    'u_component_of_wind_10m',
+    'v_component_of_wind_10m',
+    'surface_pressure',
+    'total_evaporation_sum',
+    'surface_solar_radiation_downwards_sum',
+    'surface_thermal_radiation_downwards_sum',
+    'soil_temperature_level_1',
+    'soil_temperature_level_2',
+    'soil_temperature_level_3',
+    'soil_temperature_level_4',
+    'volumetric_soil_water_layer_1',
+    'volumetric_soil_water_layer_2',
+    'volumetric_soil_water_layer_3',
+    'volumetric_soil_water_layer_4',
+    'snowfall_sum',
+    'snow_depth_water_equivalent'
+]
+
+# ERA5_VAR_TO_BAND = {var: i+1 for i, var in enumerate(ERA5_VARIABLES)}
+```
+
+```{python}
+# f'Config.ERA5_DIR/2019'
+# f'Config.ERA5_DIR/2020'
+# f'Config.ERA5_DIR/2021'
+# f'Config.ERA5_DIR/2022'
+# f'Config.ERA5_DIR/2023'
+# f'Config.ERA5_DIR/2024'
+
+# ERA5_extractor = ERA5Extractor(grids)
+# df_era5 = ERA5_extractor.extract_timeseries(
+#             era_dir=Config.ERA5_DIR,
+#             variables=ERA5_VARIABLES,     
+#             start_year=Config.START_YEAR,
+#             end_year=Config.END_YEAR
+#         )
+ERA5_extractor = ERA5Extractor(grids)
+df_era5_19 = ERA5_extractor.extract_timeseries(
+            era_dir=f'{Config.ERA5_DIR}/2019',
+            variables=ERA5_VARIABLES,     
+            start_year=Config.START_YEAR,
+            end_year=Config.END_YEAR
+        )
+
+print(f"Features: {df_era5_19.shape}")
+df_era5_19.describe()
+```
+
+
+```{python}
+output_file = os.path.join(Config.OUTPUT_DIR,  f"grid_era5_19.csv")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_era5_19.to_csv(output_file, index=False)
+print(f"   Saved to: {output_file}\n")
+```
+
+# 2020
+```{python}
+ERA5_extractor = ERA5Extractor(grids)
+df_era5_20 = ERA5_extractor.extract_timeseries(
+            era_dir=f'{Config.ERA5_DIR}/2020',
+            variables=ERA5_VARIABLES,     
+            start_year=Config.START_YEAR,
+            end_year=Config.END_YEAR
+        )
+
+print(f"Features: {df_era5_20.shape}")
+df_era5_20.describe()
+```
+
+
+```{python}
+output_file = os.path.join(Config.OUTPUT_DIR,  f"grid_era5_20.csv")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_era5_20.to_csv(output_file, index=False)
+print(f"   Saved to: {output_file}\n")
+```
+
+
+# 2021
+```{python}
+ERA5_extractor = ERA5Extractor(grids)
+df_era5_21 = ERA5_extractor.extract_timeseries(
+            era_dir=f'{Config.ERA5_DIR}/2021',
+            variables=ERA5_VARIABLES,     
+            start_year=Config.START_YEAR,
+            end_year=Config.END_YEAR
+        )
+
+print(f"Features: {df_era5_21.shape}")
+df_era5_21.describe()
+```
+
+
+```{python}
+output_file = os.path.join(Config.OUTPUT_DIR,  f"grid_era5_21.csv")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_era5_21.to_csv(output_file, index=False)
+print(f"   Saved to: {output_file}\n")
+```
+
+
+# 2022
+```{python}
+#| warning: False
+ERA5_extractor = ERA5Extractor(grids)
+df_era5_22 = ERA5_extractor.extract_timeseries(
+            era_dir=f'{Config.ERA5_DIR}/2022',
+            variables=ERA5_VARIABLES,     
+            start_year=Config.START_YEAR,
+            end_year=Config.END_YEAR
+        )
+
+print(f"Features: {df_era5_22.shape}")
+df_era5_22.describe()
+```
+
+
+```{python}
+output_file = os.path.join(Config.OUTPUT_DIR,  f"grid_era5_22.csv")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_era5_22.to_csv(output_file, index=False)
+print(f"   Saved to: {output_file}\n")
+```
+
+
+# 2023
+```{python}
+ERA5_extractor = ERA5Extractor(grids)
+df_era5_23 = ERA5_extractor.extract_timeseries(
+            era_dir=f'{Config.ERA5_DIR}/2023',
+            variables=ERA5_VARIABLES,     
+            start_year=Config.START_YEAR,
+            end_year=Config.END_YEAR
+        )
+
+print(f"Features: {df_era5_23.shape}")
+df_era5_23.describe()
+```
+
+
+```{python}
+output_file = os.path.join(Config.OUTPUT_DIR,  f"grid_era5_23.csv")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_era5_23.to_csv(output_file, index=False)
+print(f"   Saved to: {output_file}\n")
+```
+
+
+# 2024
+```{python}
+#| warning: False
+ERA5_extractor = ERA5Extractor(grids)
+df_era5_24 = ERA5_extractor.extract_timeseries(
+            era_dir=f'{Config.ERA5_DIR}/2024',
+            variables=ERA5_VARIABLES,     
+            start_year=Config.START_YEAR,
+            end_year=Config.END_YEAR
+        )
+
+print(f"Features: {df_era5_24.shape}")
+df_era5_24.describe()
+```
+
+
+```{python}
+output_file = os.path.join(Config.OUTPUT_DIR,  f"grid_era5_24.csv")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_era5_24.to_csv(output_file, index=False)
+print(f"   Saved to: {output_file}\n")
+```
+
+
+# Month-End
+```{python}
+ERA5_extractor = ERA5Extractor(grids)
+df_era5_MonthEnd = ERA5_extractor.extract_timeseries(
+            era_dir=f'{Config.ERA5_DIR}/Month-End',
+            variables=ERA5_VARIABLES,     
+            start_year=Config.START_YEAR,
+            end_year=Config.END_YEAR
+        )
+
+print(f"Features: {df_era5_MonthEnd.shape}")
+df_era5_MonthEnd.describe()
+```
+
+
+```{python}
+output_file = os.path.join(Config.OUTPUT_DIR,  f"grid_era5_MonthEnd.csv")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_era5_MonthEnd.to_csv(output_file, index=False)
+print(f"   Saved to: {output_file}\n")
+```
+
+
+## NDVI
+```{python}
+NDVI_extractor = NDVIExtractor(grids)
+df_ndvi = NDVI_extractor.extract_timeseries(
+    ndvi_dir=Config.NDVI_DIR,
+    temporal_resolution='monthly',
+    method='zonal',
+    stat_list=['mean', 'std']
+)
+# df_ndvi = df_ndvi / 10000.0
+print(f"Features: {df_ndvi.shape}")
+df_ndvi.describe()
+```
+
+
+```{python}
+output_file = os.path.join(Config.OUTPUT_DIR,  f"grid_ndvi_monthly.csv")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_ndvi.to_csv(output_file, index=False)
+print(f"   Saved to: {output_file}\n")
+```
+
+
+
+## DEM
+
+```{python}
+DEM_extractor = DEMExtractor(grids)
+df_dem = DEM_extractor.extract_terrain(Config.DEM_DIR)
+
+print(f"Features: {df_dem.shape}")
+df_dem.describe()
+```
+
+```{python}
+output_file = os.path.join(Config.OUTPUT_DIR, "grid_dem.parquet")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_dem.to_parquet(output_file, index=False)
+print(f"   Saved to: {output_file}\n")
+```
+
+## Landcover
+
+```{python}
+LC_extractor = LandcoverExtractor(grids)
+df_landcover = LC_extractor.extract_landcover(Config.LANDCOVER_FILE)
+
+print(f"Features: {df_landcover.shape}")
+df_landcover.describe()
+```
+
+```{python}
+output_file = os.path.join(Config.OUTPUT_DIR, "grid_landcover.parquet")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_landcover.to_parquet(output_file, index=False)
+print(f"   Saved to: {output_file}\n")
+```
+
+```{python}
+import rasterio
+with rasterio.open("/Users/henzhwang/Downloads/bc_landcover_2022.tif") as src:
+    print("CRS:", src.crs)
+    print("Bounds:", src.bounds)
+    print("Width / Height:", src.width, src.height)
+    print("Transform:", src.transform)
+```
+
+
+```{python}
+import numpy as np
+with rasterio.open("/Users/henzhwang/Downloads/bc_landcover_2022.tif") as src:
+    arr = src.read(1)
+    vals = np.unique(arr[arr != src.nodata])
+    print(vals)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

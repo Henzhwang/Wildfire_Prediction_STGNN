@@ -1,0 +1,287 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import os
+import re
+import glob
+from tqdm import tqdm
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+import seaborn as sns
+import matplotlib.pyplot as plt
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+GRID_DIR = PROJECT_ROOT/'Processed Data'/'Grid'/'STATCAN0.25'/'BC_grids_boundary0.25.geojson'
+GRID_FIRES_DIR = PROJECT_ROOT/'Processed Data'/'Fire Points'/'grid_fire_points.csv'
+ERA5_DIR = PROJECT_ROOT/'Processed Data'/'Rasters'/'grid_era5_reduced.parquet'
+NDVI_DIR = PROJECT_ROOT/'Processed Data'/'Rasters'/'grid_ndvi_long.parquet'
+DEM_DIR = PROJECT_ROOT/'Processed Data'/'Rasters'/'grid_dem_clean.parquet'
+LAND_DIR = PROJECT_ROOT/'Processed Data'/'Rasters'/'grid_landcover.parquet'
+
+OUTPUT_DIR = PROJECT_ROOT/'Processed Data'
+```
+
+## Merge all data in to one dataframe
+
+```{python}
+bad_grid_ids = set([
+    'G_00089', 'G_00091', 'G_00101', 'G_00115', 'G_00116', 'G_00136',
+    'G_00155', 'G_00169', 'G_00176', 'G_00191', 'G_00196', 'G_00197',
+    'G_00212', 'G_00214', 'G_00215', 'G_00231', 'G_00233', 'G_00234',
+    'G_00250', 'G_00251', 'G_00252', 'G_00270', 'G_00271', 'G_00272',
+    'G_00292', 'G_00295', 'G_00296', 'G_00315', 'G_00371', 'G_00400',
+    'G_00401', 'G_00431', 'G_00432', 'G_00463', 'G_00464', 'G_00495',
+    'G_00496', 'G_00497', 'G_00529', 'G_00530', 'G_00531', 'G_00532',
+    'G_00533', 'G_00564', 'G_00566', 'G_00567', 'G_00568', 'G_00569',
+    'G_00570', 'G_00608', 'G_00643', 'G_00647', 'G_00808', 'G_00894',
+    'G_00982', 'G_01027', 'G_01072', 'G_01118', 'G_01123', 'G_01164',
+    'G_01168', 'G_01214', 'G_01257', 'G_01261', 'G_01354', 'G_01398',
+    'G_01400', 'G_01444', 'G_01445', 'G_01446',
+    'G_01210', 'G_01304', 'G_01351'
+])
+```
+
+```{python}
+## grid
+grids = gpd.read_file(GRID_DIR)
+grids = grids[~grids["grid_id"].isin(bad_grid_ids)].copy()
+
+## fire points with grid labels
+grid_fires = pd.read_csv(GRID_FIRES_DIR)
+
+## data combinations
+dates = pd.date_range('2019-01-01', '2024-12-31', freq='D')
+```
+
+```{python}
+# ## create empty dataframe for merge
+# all_combinations = pd.MultiIndex.from_product(
+#     [grids[['grid_id', 'centroid_lon', 'centroid_lat']], dates],
+#     names=['grid_id', 'centroid_lon', 'centroid_lat', 'Date']
+# ).to_frame(index=False)
+
+# ## to datetime
+# dates = pd.to_datetime(dates)
+# grid_fires['Date'] = pd.to_datetime(grid_fires['Date'])
+```
+
+```{python}
+grid_coords = grids[['grid_id', 'centroid_lon', 'centroid_lat']].drop_duplicates()
+
+# trandform date to dataframe
+date_df = pd.DataFrame({'Date': pd.to_datetime(dates)})
+
+# ross join
+grid_coords['key'] = 1
+date_df['key'] = 1
+
+all_combinations = (
+    grid_coords
+        .merge(date_df, on='key')
+        .drop(columns='key')
+        .sort_values(['grid_id', 'Date'])
+        .reset_index(drop=True)
+)
+
+print(all_combinations.head())
+print(all_combinations.shape)
+```
+
+```{python}
+## to datetime
+dates = pd.to_datetime(dates)
+grid_fires['Date'] = pd.to_datetime(grid_fires['Date'])
+
+# merge dataframe with fire labels
+df = all_combinations.merge(
+    grid_fires, 
+    on=['grid_id', 'Date'], 
+    how='left'
+)
+# df.head()
+print(f'Original shape: {df.shape}')
+```
+
+## Merge with ERA5
+
+```{python}
+## load reduced era5 data
+grid_era5 = pd.read_parquet(ERA5_DIR)
+grid_era5['Date'] = pd.to_datetime(grid_era5['Date'])
+grid_era5[['Year', 'Month']] = grid_era5[['Year', 'Month']].astype(int)
+grid_era5.shape
+grid_era5.columns
+```
+
+```{python}
+df = df.merge(
+    grid_era5,
+    on=['grid_id', 'Date'],
+    how='left'
+)
+print(f'Shape combined ERA5: {df.shape}')
+```
+
+
+## Merge with NDVI
+
+```{python}
+grid_ndvi = pd.read_parquet(NDVI_DIR)
+grid_ndvi.shape
+grid_ndvi.columns
+```
+
+```{python}
+df = df.merge(
+    grid_ndvi.drop(columns=['Date']),
+    on=['grid_id', 'Year', 'Month'],
+    how='left'
+)
+print(f'Shape combined NDVI: {df.shape}')
+```
+
+
+## Merge with DEM
+
+```{python}
+grid_DEM = pd.read_parquet(DEM_DIR)
+grid_DEM.shape
+grid_DEM.columns
+```
+
+```{python}
+df = df.merge(
+    grid_DEM,
+    on=['grid_id'],
+    how='left'
+)
+print(f'Shape combined DEM: {df.shape}')
+```
+
+
+## Merge with Landcover
+
+```{python}
+grid_landcover = pd.read_parquet(LAND_DIR)
+grid_landcover.shape
+grid_landcover.columns
+```
+
+```{python}
+df = df.merge(
+    grid_landcover,
+    on=['grid_id'],
+    how='left'
+)
+print(f'Shape combined Landcover: {df.shape}')
+```
+
+## Check NAs
+
+```{python}
+na_summary = (
+    df.isna()
+      .sum()
+      .sort_values(ascending=False)
+)
+
+print("NA count per column (non-zero only):")
+print(na_summary[na_summary > 0])
+```
+
+## Save
+
+```{python}
+output_file = os.path.join(OUTPUT_DIR,  f"grid_all.parquet")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df.to_parquet(output_file, index=False)
+print(f"Saved to: {output_file}\n")
+```
+
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

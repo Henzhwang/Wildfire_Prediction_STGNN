@@ -1,0 +1,141 @@
+---
+title: "Untitled"
+format: html
+%load_ext autoreload
+%autoreload 2
+---
+
+```{python}
+%load_ext autoreload
+%autoreload 2
+```
+
+```{python}
+import sys
+import os
+import re
+import glob
+from tqdm import tqdm
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+sys.path.append("/Users/henzhwang/Desktop/STA4101/Scripts/04_Models")
+
+from graph_builder import BCFireGraphBuilder
+from stgnn_model import SimpleSTGNN
+from data_loader import TemporalSplit, create_dataloaders
+from trainer import STGNNTrainer
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+DATA_DIR = PROJECT_ROOT/'Processed Data'/'grid_all_neighbors.parquet'
+
+df = pd.read_parquet(DATA_DIR)
+```
+
+```{python}
+# build graph
+builder = BCFireGraphBuilder(num_neighbors=8)
+graph = builder.build_graph_from_data(df)
+```
+
+```{python}
+# split data
+# train_df, val_df, test_df = TemporalSplit.split_by_ratio(df, 0.7, 0.15)
+train_df, val_df, test_df = TemporalSplit.split_by_date(
+    df,
+    train_end='2022-12-31',
+    val_end='2023-12-31',
+    test_start='2024-01-01'
+)
+```
+
+```{python}
+feature_cols = ['grid_id', 'Date', 'Fire_occurred',
+                'centroid_lon', 'centroid_lat']
+loaders = create_dataloaders(train_df, val_df, test_df, graph, feature_cols)
+```
+
+```{python}
+# train
+model = SimpleSTGNN(num_features=63, num_nodes=2367)
+trainer = STGNNTrainer(model, *loaders, device='cuda')
+metrics = trainer.train(num_epochs=50)
+```
+
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

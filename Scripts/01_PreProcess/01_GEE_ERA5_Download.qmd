@@ -1,0 +1,282 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import ee
+import datetime
+from dateutil.relativedelta import relativedelta
+```
+
+```{python}
+ee.Initialize(project='ee-henryhwang2001')
+print(f"Google Earth Engine Connected...")
+```
+
+
+```{python}
+```
+
+
+```{python}
+# Time range
+START_DATE = '2019-01-01'
+END_DATE = '2024-12-31'
+
+## BC bounds
+# BC_bounds = ee.FeatureCollection('Processed Data/Boundary/BC/BC_boundary.geojson')
+# BC_bounds = ee.FeatureCollection('projects/ee-henryhwang2001/assets/BC_boundary')
+BC_bounds = ee.FeatureCollection('projects/ee-henryhwang2001/assets/BC_Boundary_simple')
+
+
+# canada_bounds = ee.FeatureCollection("FAO/GAUL/2015/level1")
+# # BC_bounds = canada_bounds.filter(ee.Filter.eq('ADM1_NAME', 'British Columbia'))
+# BC_bounds = ee.FeatureCollection("USDOS/LSIB_SIMPLE/2017") \
+#     .filter(ee.Filter.eq("country_na", "Canada")) \
+#     .filter(ee.Filter.eq("name", "British Columbia"))
+
+## spatial resolution
+scale = 25000 ## matching 0.25
+
+##
+Drive_Folder = 'BC_ERA5_Daily_Data'
+```
+
+```{python}
+import geemap
+Map = geemap.Map()
+Map.addLayer(BC_bounds, {}, "BC Boundary")
+Map
+```
+
+```{python}
+## Variables
+## 23 in total
+VARIABLES = [
+    # Temperature (5)
+    'temperature_2m',                      # 2米平均气温 (K)
+    'temperature_2m_max',                  # 2米最高气温 (K)
+    'temperature_2m_min',                  # 2米最低气温 (K)
+    'dewpoint_temperature_2m',             # 2米露点温度 (K)
+    'skin_temperature',                    # 地表温度 (K)
+    
+    # precipitation (3)
+    'total_precipitation_sum',             # 总降水量 (m)
+    'surface_runoff_sum',                  # 地表径流 (m)
+    
+    # wind speed (2)
+    'u_component_of_wind_10m',             # 10米风速U分量 (m/s)
+    'v_component_of_wind_10m',             # 10米风速V分量 (m/s)
+    
+    # pressure (2)
+    'surface_pressure',                    # 地表气压 (Pa)
+    'total_evaporation_sum',               # 总蒸发量 (m)
+    
+    # radiation (2)
+    'surface_solar_radiation_downwards_sum',    # 太阳辐射 (J/m²)
+    'surface_thermal_radiation_downwards_sum',  # 热辐射 (J/m²)
+    
+    # soil temperature (4)
+    'soil_temperature_level_1',            # 土壤温度 0-7cm (K)
+    'soil_temperature_level_2',            # 土壤温度 7-28cm (K)
+    'soil_temperature_level_3',            # 土壤温度 28-100cm (K)
+    'soil_temperature_level_4',            # 土壤温度 100-289cm (K)
+    
+    # sool water (4)
+    'volumetric_soil_water_layer_1',       # 土壤水分 0-7cm (m³/m³)
+    'volumetric_soil_water_layer_2',       # 土壤水分 7-28cm (m³/m³)
+    'volumetric_soil_water_layer_3',       # 土壤水分 28-100cm (m³/m³)
+    'volumetric_soil_water_layer_4',       # 土壤水分 100-289cm (m³/m³)
+    
+    # snow (2)
+    'snowfall_sum',                        # 降雪量 (m water equivalent)
+    'snow_depth_water_equivalent'          # 积雪水当量 (m)
+]
+
+print(f"Extracting {len(VARIABLES)} Variables...")
+```
+
+```{python}
+def generate_month_list(start_date, end_date):
+    ## generating all months in range
+    months = []
+    current = datetime.datetime.strptime(start_date, '%Y-%m-%d')
+    end = datetime.datetime.strptime(end_date, '%Y-%m-%d')
+    
+    while current <= end:
+        month_start = current.strftime('%Y-%m-01')
+        # compute last day of the month
+        next_month = current + relativedelta(months=1)
+        month_end = (next_month - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        months.append({
+            'start': month_start,
+            'end': month_end,
+            'label': current.strftime('%Y_%m')
+        })
+        
+        current = next_month
+    
+    return months
+
+months = generate_month_list(START_DATE, END_DATE)
+print(f"Exporting {len(months)} months...")
+```
+
+```{python}
+def export_monthly_era5(month_info, index):
+    """
+    Exporting ERA5 for a single month
+    """
+    
+    start_date = month_info['start']
+    end_date = month_info['end']
+    label = month_info['label']
+    
+    print(f"\n[{index+1}/{len(months)}] 处理: {label} ({start_date} to {end_date})")
+    
+    # Loading ERA5 data for the month 
+    era5_month = ee.ImageCollection('ECMWF/ERA5_LAND/DAILY_AGGR') \
+        .filterBounds(BC_bounds) \
+        .filterDate(start_date, end_date) \
+        .select(VARIABLES)
+    
+    # check if data exists
+    count = era5_month.size().getInfo()
+    print(f"  - Days: {count}")
+    
+    if count == 0:
+        print(f"  No data found, pass")
+        return None
+    
+    ## transforming to multibands tif
+    ## one bands for one day
+    era5_image = era5_month.toBands()
+    
+    # tasck configuration
+    task_config = {
+        'description': f'BC_ERA5_Daily_{label}',
+        'folder': Drive_Folder,
+        'scale': scale,
+        'region': BC_bounds.bounds().getInfo()['coordinates'] if isinstance(BC_bounds, ee.Geometry) else BC_bounds.geometry().bounds().getInfo()['coordinates'],
+        'maxPixels': 1e13,
+        'fileFormat': 'GeoTIFF',
+        'formatOptions': {
+            'cloudOptimized': True
+        }
+    }
+    
+    # create task
+    task = ee.batch.Export.image.toDrive(
+        image=era5_image,
+        **task_config
+    )
+    
+    task.start()
+    
+    print(f"  - Submitted task {task_config['description']}")
+    print(f"  - Task ID: {task.id}")
+    
+    return task
+```
+
+```{python}
+def export_all_months():
+    """
+    Exporting data for all month
+    """
+    
+    print("\n" + "="*70)
+    print("Bulk download for ERA5 daily record")
+    print("="*70)
+    
+    tasks = []
+    
+    for i, month_info in enumerate(months):
+        task = export_monthly_era5(month_info, i)
+        if task:
+            tasks.append(task)
+        
+        # pasue every 10 submission
+        if (i + 1) % 10 == 0:
+            import time
+            time.sleep(2)
+    
+    print("\n" + "="*70)
+    print(f"All export task submiited！")
+    print(f"  - # Tasks: {len(tasks)}")
+    print(f"  - Target folder: Google Drive/{Drive_Folder}/")
+    print("="*70)
+    
+    print("\nCheck Progress: https://code.earthengine.google.com/tasks")
+    
+    return tasks
+```
+
+```{python}
+tasks = export_all_months()
+```
+
+```{python}
+
+```
+
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

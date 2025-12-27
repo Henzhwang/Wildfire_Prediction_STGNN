@@ -1,0 +1,216 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+from pathlib import Path
+import geopandas as gpd
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
+```
+
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+GRID_DIR = PROJECT_ROOT/'Processed Data'/'Grid'/'STATCAN0.25'/'BC_grids_boundary0.25.geojson'
+GRID_FIRES_DIR = PROJECT_ROOT/'Processed Data'/'Fire Points'/'grid_fire_points.csv'
+OUTPUT_DIR = PROJECT_ROOT/'Output'/'Figures'/'Grid'
+```
+
+```{python}
+grids = gpd.read_file(GRID_DIR)
+# grids = grids[~grids["grid_id"].isin(bad_grid_ids)].copy()
+
+## fire points with grid labels
+grid_fires = pd.read_csv(GRID_FIRES_DIR)
+
+## data combinations
+dates = pd.date_range('2019-01-01', '2024-12-31', freq='D')
+```
+
+```{python}
+# BAD GRID SETS
+era5_bad_ids = set([
+    'G_00089','G_00091','G_00101','G_00115','G_00116','G_00136',
+    'G_00155','G_00169','G_00176','G_00191','G_00196','G_00197',
+    'G_00212','G_00214','G_00215','G_00231','G_00233','G_00234',
+    'G_00250','G_00251','G_00252','G_00270','G_00271','G_00272',
+    'G_00292','G_00295','G_00296','G_00315','G_00371','G_00400',
+    'G_00401','G_00431','G_00432','G_00463','G_00464','G_00495',
+    'G_00496','G_00497','G_00529','G_00530','G_00531','G_00532',
+    'G_00533','G_00564','G_00566','G_00567','G_00568','G_00569',
+    'G_00570','G_00608','G_00643','G_00647','G_00808','G_00894',
+    'G_00982','G_01027','G_01072','G_01118','G_01123','G_01164',
+    'G_01168','G_01214','G_01257','G_01261','G_01354','G_01398',
+    'G_01400','G_01444','G_01445','G_01446'
+])
+
+dem_bad_ids = set([
+    'G_01072','G_01118','G_01210','G_01257',
+    'G_01304','G_01351','G_01398','G_01444'
+])
+
+
+
+# Set logic
+both_bad_ids = era5_bad_ids & dem_bad_ids
+era5_only_ids = era5_bad_ids - dem_bad_ids
+dem_only_ids = dem_bad_ids - era5_bad_ids
+
+print("ERA5-only:", len(era5_only_ids))
+print("DEM-only:", len(dem_only_ids))
+print("Both:", len(both_bad_ids))
+
+```
+
+```{python}
+grids_albers = grids.to_crs("EPSG:3005").copy()
+
+era5_only_gdf = grids_albers[grids_albers["grid_id"].isin(era5_only_ids)]
+dem_only_gdf  = grids_albers[grids_albers["grid_id"].isin(dem_only_ids)]
+both_bad_gdf  = grids_albers[grids_albers["grid_id"].isin(both_bad_ids)]
+```
+
+```{python}
+fig, ax = plt.subplots(1, 1, figsize=(12, 14))
+
+# Base grids (context only)
+grids_albers.plot(
+    ax=ax,
+    color="#f5f5f5",       
+    edgecolor="#e0e0e0",
+    linewidth=0.08,
+    zorder=1
+)
+
+
+# ERA5-only bad grids
+era5_only_gdf.plot(
+    ax=ax,
+    color="#fdae61",
+    edgecolor="black",
+    linewidth=0.5,
+    alpha=0.9,
+    zorder=2
+)
+
+
+# DEM-only bad grids
+dem_only_gdf.plot(
+    ax=ax,
+    color="#2b83ba",
+    edgecolor="black",
+    linewidth=0.6,
+    alpha=0.95,
+    zorder=3
+)
+
+
+# BOTH (ERA5 and DEM)
+both_bad_gdf.plot(
+    ax=ax,
+    color="#d7191c",
+    edgecolor="black",
+    linewidth=0.9,
+    alpha=1.0,
+    zorder=4
+)
+
+# Custom legend (recommended)
+legend_handles = [
+    Patch(facecolor="#fdae61", edgecolor="black",
+          label=f"ERA5-only bad grids (n={len(era5_only_gdf)})"),
+    Patch(facecolor="#2b83ba", edgecolor="black",
+          label=f"DEM-only bad grids (n={len(dem_only_gdf)})"),
+    Patch(facecolor="#d7191c", edgecolor="black",
+          label=f"ERA5 and DEM bad grids (n={len(both_bad_gdf)})"),
+]
+
+ax.legend(
+    handles=legend_handles,
+    loc="lower left",
+    fontsize=12,
+    frameon=True,
+    framealpha=0.95
+)
+
+
+# Axes & title
+# ax.set_title("Spatial Distribution of Bad Grids", fontsize=20, fontweight="bold", pad=12)
+
+ax.set_xlabel("Easting (m)", fontsize=14)
+ax.set_ylabel("Northing (m)", fontsize=14)
+
+ax.ticklabel_format(style="plain", axis="both")
+ax.tick_params(labelsize=12)
+
+outpath = OUTPUT_DIR / "03_Bad_Grids.png"
+plt.savefig(outpath, dpi=300, bbox_inches="tight")
+
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+
+```
+
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

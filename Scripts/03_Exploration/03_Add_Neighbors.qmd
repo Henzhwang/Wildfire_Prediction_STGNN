@@ -1,0 +1,261 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import os
+import re
+import glob
+from tqdm import tqdm
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+import pickle
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+GRID_DIR = PROJECT_ROOT/'Processed Data'/'Grid'/'STATCAN0.25'/'BC_grids_boundary0.25.geojson'
+DATA_DIR = PROJECT_ROOT/'Processed Data'/'grid_all_features.parquet'
+NEIGH_DICT_DIR = PROJECT_ROOT/'Output'/'Variable'
+
+OUTPUT_DIR = PROJECT_ROOT/'Processed Data'
+```
+
+```{python}
+## load grid
+grids_gdf = gpd.read_file(GRID_DIR).to_crs('EPSG:3005')
+## load data
+df = pd.read_parquet(DATA_DIR)
+```
+
+## Neighbors
+
+```{python}
+# we want to build 8 neighbors around
+neighbor_dict = {}
+
+print("Finding neighbors...")
+for idx, grid in tqdm(grids_gdf.iterrows(), total=len(grids_gdf)):
+    grid_id = grid['grid_id']
+    
+    # use touches to find neighbour
+    neighbors = grids_gdf[
+        grids_gdf.geometry.touches(grid.geometry)
+    ]['grid_id'].tolist()
+    
+    neighbor_dict[grid_id] = neighbors
+
+print(f"Average #neighbors: {sum(len(v) for v in neighbor_dict.values()) / len(neighbor_dict):.1f}")
+
+# save
+with open(f'{NEIGH_DICT_DIR} + neighbor_dict.pkl', 'wb') as f:
+    pickle.dump(neighbor_dict, f)
+
+print("neighbor_dict Saved!")
+```
+
+
+## Neighbor bearing
+
+```{python}
+## Finding bearing of neighbors
+neighbor_bearing_dict = {}
+
+print("Finding neighbors direction...")
+for idx, grid in grids_gdf.iterrows():
+    grid_id = grid['grid_id']
+    grid_centroid = grid.geometry.centroid
+    
+    neighbor_bearings = {}
+    
+    if grid_id in neighbor_dict:
+        for neighbor_id in neighbor_dict[grid_id]:
+            # neighbors centroids
+            neighbor_centroid = grids_gdf[grids_gdf['grid_id'] == neighbor_id].geometry.centroid.iloc[0]
+            
+            # Calculate the azimuth angle 
+            # (from the current grid to the neighbor)
+            dx = neighbor_centroid.x - grid_centroid.x
+            dy = neighbor_centroid.y - grid_centroid.y
+            
+            # azimuth angle
+            # North = 0, East = 90, South = 180, West = 270
+            bearing = (90 - np.degrees(np.arctan2(dy, dx))) % 360
+            
+            neighbor_bearings[neighbor_id] = bearing
+    
+    neighbor_bearing_dict[grid_id] = neighbor_bearings
+
+with open(f'{NEIGH_DICT_DIR} + neighbor_bearing_dict.pkl', 'wb') as f:
+    pickle.dump(neighbor_bearing_dict, f)
+
+print("neighbor bearing dict Saved!")
+
+# with open(f'{NEIGH_DICT_DIR} + neighbor_bearing_dict.pkl', 'rb') as f:
+#     neighbor_bearing_dict = pickle.load(f)
+```
+
+
+## Computation
+
+```{python}
+# with open(f'{NEIGH_DICT_DIR} + neighbor_dict.pkl', 'rb') as f:
+#     neighbor_dict = pickle.load(f)
+
+# with open(f'{NEIGH_DICT_DIR} + neighbor_bearing_dict.pkl', 'rb') as f:
+#     neighbor_bearing_dict = pickle.load(f)
+```
+
+
+```{python}
+## create neighbor maps
+neighbor_pairs = []
+for grid, neighbors in neighbor_dict.items():
+    for nb in neighbors:
+        bearing = neighbor_bearing_dict[grid].get(nb, np.nan)
+        neighbor_pairs.append({
+            'grid_id': grid,
+            'neighbor_id': nb,
+            'bearing': bearing
+        })
+
+neighbor_pairs = pd.DataFrame(neighbor_pairs)
+```
+
+```{python}
+## vectorized neighbors
+base_cols = ['grid_id', 'Date', 'wind_dir', 'wind_speed',
+             'volumetric_soil_water_layer_1']
+
+df_base = df[base_cols].copy()
+
+# expand to grid × neighbor
+## shape = 5188464 x 8
+expanded = df_base.merge(neighbor_pairs, on='grid_id', how='left')
+
+# wind direaction alignment
+angle_diff = (expanded['wind_dir'] - expanded['bearing']).abs()
+angle_diff = np.where(angle_diff > 180, 360 - angle_diff, angle_diff)
+
+expanded['wind_alignment'] = np.cos(np.radians(angle_diff))
+```
+
+```{python}
+# fire status of neighbors
+neighbor_fire = df[['grid_id', 'Date', 'Fire_occurred']].rename(
+    columns={'grid_id': 'neighbor_id', 'Fire_occurred': 'fire_occurred_neighbor'}
+)
+
+expanded = expanded.merge(
+    neighbor_fire,
+    on=['neighbor_id', 'Date'],
+    how='left'
+)
+
+expanded['fire_occurred_neighbor'] = expanded['fire_occurred_neighbor'].fillna(0)
+
+# compute neighbor risk component
+expanded['spread_risk_component'] = (
+    expanded['fire_occurred_neighbor'] *
+    (expanded['wind_alignment'] * 0.5 + 0.5) *  
+    expanded['wind_speed'] *                      
+    (1 / (expanded['volumetric_soil_water_layer_1'] + 0.01))  
+)
+
+```
+
+```{python}
+## merge back
+risk_agg = expanded.groupby(['grid_id', 'Date']).agg(
+    fire_spread_risk=('spread_risk_component', 'sum'),
+    max_wind_alignment=('wind_alignment', 'max'),
+    neighbor_on_fire=('fire_occurred_neighbor', 'sum')
+).reset_index()
+
+df = df.merge(risk_agg, on=['grid_id', 'Date'], how='left')
+
+df['fire_spread_risk'] = df['fire_spread_risk'].fillna(0)
+df['max_wind_alignment'] = df['max_wind_alignment'].fillna(0)
+df['neighbor_on_fire'] = df['neighbor_on_fire'].fillna(0)
+```
+
+
+```{python}
+print("\n" + "="*50)
+print("Statistics:")
+print("="*50)
+print(f"fire_spread_risk:")
+print(f"  Mean: {df['fire_spread_risk'].mean():.4f}")
+print(f"  Max: {df['fire_spread_risk'].max():.4f}")
+print(f"  Non-zero: {(df['fire_spread_risk'] > 0).mean()*100:.2f}%")
+
+print(f"\nmax_wind_alignment:")
+print(f"  Mean: {df['max_wind_alignment'].mean():.4f}")
+print(f"  Max: {df['max_wind_alignment'].max():.4f}")
+
+print(f"\nneighbor_on_fire:")
+print(f"  Mean: {df['neighbor_on_fire'].mean():.4f}")
+print(f"  Max: {df['neighbor_on_fire'].max():.0f}")
+print(f"  Non-zero: {(df['neighbor_on_fire'] > 0).mean()*100:.2f}%")
+```
+
+```{python}
+output_file = os.path.join(OUTPUT_DIR,  f"grid_all_neighbors.parquet")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df.to_parquet(output_file, index=False)
+print(f"Saved to: {output_file}\n")
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

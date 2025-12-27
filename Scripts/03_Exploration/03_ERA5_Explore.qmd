@@ -1,0 +1,476 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+import os
+import re
+import glob
+import geopandas as gpd
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.gridspec import GridSpec
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+import matplotlib as mpl
+import seaborn as sns
+from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
+
+
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.rcParams['font.size'] = 10
+plt.rcParams['axes.titleweight'] = 'bold'
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = Path().resolve().parents[1]
+FIRE_DIR = PROJECT_ROOT/'Processed Data'/'Fire Points'/'Fire Points.shp'
+GRID_DIR = PROJECT_ROOT/'Processed Data'/'Grid'/'STATCAN0.25'/'BC_grids_boundary0.25.geojson'
+ERA5_DIR = PROJECT_ROOT/'Processed Data'/'Rasters'/'grid_era5_reduced.parquet'
+
+OUTPUT_DIR = PROJECT_ROOT/'Output'/'Figures'/'ERA5'
+```
+
+```{python}
+plt.rcParams.update({
+    'xtick.labelsize': 17,
+    'ytick.labelsize': 17,
+    'axes.labelsize': 17,        
+    'axes.titlesize': 17,        
+    'axes.titleweight': 'bold',
+})
+```
+
+```{python}
+df_era5 = pd.read_parquet(ERA5_DIR)
+grids = gpd.read_file(GRID_DIR)
+fire_points = gpd.read_file(FIRE_DIR)
+
+
+# Convert to epsg:3005
+print("\n Converting to BC Albers (EPSG:3005)...")
+grids_albers = grids.to_crs('EPSG:3005')
+fire_albers = fire_points.to_crs('EPSG:3005')
+print("   CRS conversion completed")
+
+
+## DATA PREPARATION
+
+print("\n" + "="*80)
+print("PART 1: DATA PREPARATION")
+print("="*80)
+
+
+df_era5['Date'] = pd.to_datetime(df_era5['Date'])
+df_era5['day_of_year'] = df_era5['Date'].dt.dayofyear
+
+# convert units
+df_era5['temperature_celsius'] = df_era5['temperature_2m'] - 273.15
+df_era5['precipitation_mm'] = df_era5['total_precipitation_sum'] * 1000  # m to mm
+df_era5['wind_speed'] = np.sqrt(
+    df_era5['u_component_of_wind_10m']**2 + 
+    df_era5['v_component_of_wind_10m']**2
+)
+
+print(f"\nDataset Overview:")
+print(f"   Shape: {df_era5.shape}")
+print(f"   Time range: {df_era5['Date'].min()} to {df_era5['Date'].max()}")
+print(f"   Years: {sorted(df_era5['Year'].unique())}")
+print(f"   Grids: {df_era5['grid_id'].nunique()}")
+```
+
+```{python}
+df_era5 = df_era5.copy()
+df_era5['Date'] = pd.to_datetime(df_era5['Date'])
+if 'Year' not in df_era5.columns:
+    df_era5['Year'] = df_era5['Date'].dt.year
+df_era5['day_of_year'] = df_era5['Date'].dt.dayofyear
+
+# daily mean temp across grids
+# per year and doy
+daily_temp = (
+    df_era5.groupby(['Year', 'day_of_year'])['temperature_celsius']
+    .mean()
+    .reset_index()
+)
+
+# drop leap day for alignment
+daily_temp = daily_temp[daily_temp['day_of_year'] <= 365].copy()
+
+# map doy -> fixed x-axis date (Jan–Dec)
+base_year = 2001
+daily_temp['xdate'] = pd.to_datetime(
+    daily_temp['day_of_year'].astype(int).astype(str),
+    format='%j'
+).apply(lambda d: d.replace(year=base_year))
+
+# 7-day rolling 
+daily_temp = daily_temp.sort_values(['Year', 'day_of_year'])
+daily_temp['temp_roll7'] = (
+    daily_temp.groupby('Year')['temperature_celsius']
+    .transform(lambda s: s.rolling(window=7, center=True, min_periods=1).mean())
+)
+
+# -mean across years for each doy, then roll 7 ---
+clim = (
+    daily_temp.groupby('day_of_year')['temperature_celsius']
+    .mean()
+    .reset_index(name='temp_clim')
+)
+clim['temp_clim_roll7'] = (
+    clim['temp_clim'].rolling(window=7, center=True, min_periods=1).mean()
+)
+clim['xdate'] = pd.to_datetime(
+    clim['day_of_year'].astype(int).astype(str),
+    format='%j'
+).apply(lambda d: d.replace(year=base_year))
+
+# plot
+fig, ax = plt.subplots(figsize=(18, 8))
+
+colors = {
+    2019: '#1f77b4',
+    2020: '#ff7f0e',
+    2021: '#2ca02c',
+    2022: '#d62728',
+    2023: '#9467bd',
+    2024: '#8c564b'
+}
+
+years = sorted(daily_temp['Year'].unique())
+
+# yearly curves 
+for y in years:
+    ydat = daily_temp[daily_temp['Year'] == y].sort_values('day_of_year')
+    ax.plot(
+        ydat['xdate'],
+        ydat['temp_roll7'],
+        linewidth=1.4,
+        alpha=0.85,
+        color=colors.get(y, None),
+        label=str(y)
+    )
+
+# climatology curve
+ax.plot(
+    clim['xdate'],
+    clim['temp_clim_roll7'],
+    color='0.2',
+    linewidth=2.5,
+    alpha=0.95,
+    linestyle='--',
+    label='2019–2024 mean'
+)
+
+# x-axis month formatting
+ax.set_xlim(pd.Timestamp(base_year, 1, 1), pd.Timestamp(base_year, 12, 31))
+ax.xaxis.set_major_locator(mdates.MonthLocator())
+ax.xaxis.set_major_formatter(mdates.DateFormatter('%b'))
+
+ax.set_xlabel('Day of Year', fontsize=17, fontweight='bold')
+ax.set_ylabel('Daily Mean Temperature (°C)', fontsize=17, fontweight='bold')
+
+ax.axhline(0, color='black', linewidth=0.9, alpha=0.5)
+ax.grid(alpha=0.25, linestyle='--')
+
+ax.legend(
+    title='Year',
+    loc='upper left',
+    frameon=True,
+    framealpha=0.85,          
+    facecolor='white',
+    edgecolor='gray',
+    fontsize=14,
+    title_fontsize=15,
+    ncol=1
+)
+
+ax.text(-0.03, 1.02, 'A', transform=ax.transAxes,
+         fontsize=25, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+plt.tight_layout()
+outpath = OUTPUT_DIR / '02_ERA_EDA1-1.png'
+plt.savefig(outpath, dpi=300, bbox_inches='tight')
+print(f"Saved: {outpath}")
+plt.show()
+```
+
+```{python}
+# VIOLIN PLOTS
+
+selected_months = [2, 5, 7, 9, 11]
+month_names_map = {2: 'Feb', 5: 'May', 7: 'Jul', 9: 'Sep', 11: 'Nov'}
+month_order = [month_names_map[m] for m in selected_months]
+
+# Temperature daily distribution 
+temp_daily = df_era5[df_era5['Month'].isin(selected_months)].copy()
+temp_daily['Month_Name'] = temp_daily['Month'].map(month_names_map)
+
+# Precipitation monthly
+prec_monthly = (
+    df_era5[df_era5['Month'].isin(selected_months)]
+    .groupby(['Year', 'Month', 'grid_id'])['precipitation_mm']
+    .sum()
+    .reset_index()
+)
+prec_monthly['Month_Name'] = prec_monthly['Month'].map(month_names_map)
+
+# Soil moisture monthly mean
+soil_monthly = (
+    df_era5[df_era5['Month'].isin(selected_months)]
+    .groupby(['Year', 'Month', 'grid_id'])['volumetric_soil_water_layer_1']
+    .mean()
+    .reset_index()
+)
+soil_monthly['Month_Name'] = soil_monthly['Month'].map(month_names_map)
+
+# Wind speed monthly mean
+wind_monthly = (
+    df_era5[df_era5['Month'].isin(selected_months)]
+    .groupby(['Year', 'Month', 'grid_id'])['wind_speed']
+    .mean()
+    .reset_index()
+)
+wind_monthly['Month_Name'] = wind_monthly['Month'].map(month_names_map)
+
+fig2, axes = plt.subplots(2, 2, figsize=(18, 10))
+axes = axes.ravel()
+
+def violin_one(ax, data_list, title, ylabel, logy=False):
+    parts = ax.violinplot(
+        data_list,
+        positions=range(len(month_order)),
+        widths=0.75,
+        showmeans=True,
+        showmedians=True
+    )
+    for pc in parts['bodies']:
+        pc.set_alpha(0.6)
+        pc.set_edgecolor('black')
+        pc.set_linewidth(1.1)
+    parts['cmeans'].set_color('red'); parts['cmeans'].set_linewidth(2)
+    parts['cmedians'].set_color('blue'); parts['cmedians'].set_linewidth(2)
+    parts['cbars'].set_color('black')
+    parts['cmaxes'].set_color('black')
+    parts['cmins'].set_color('black')
+
+    ax.set_xticks(range(len(month_order)))
+    ax.set_xticklabels(month_order, fontweight='bold')
+    ax.set_title(title, fontweight='bold')
+    ax.set_ylabel(ylabel)
+    ax.grid(axis='y', alpha=0.25, linestyle='--')
+    if logy:
+        ax.set_yscale('log')
+
+# daily temp
+temp_data = [temp_daily[temp_daily['Month_Name'] == m]['temperature_celsius'].dropna().values for m in month_order]
+violin_one(axes[0], temp_data, 'Temperature (Daily, 2019–2024)', '°C')
+
+# Precipitation + log
+prec_data = [prec_monthly[prec_monthly['Month_Name'] == m]['precipitation_mm'].dropna().values for m in month_order]
+prec_data = [np.where(v <= 0, 1e-3, v) for v in prec_data]
+violin_one(axes[1], prec_data, 'Precipitation (Grid-Month Total, log, 2019–2024)', 'mm (log)', logy=True)
+
+# Soil moisture
+soil_data = [soil_monthly[soil_monthly['Month_Name'] == m]['volumetric_soil_water_layer_1'].dropna().values for m in month_order]
+violin_one(axes[2], soil_data, 'Soil Moisture L1 (Grid-Month Mean, 2019–2024)', 'm³/m³')
+
+# Wind speed
+wind_data = [wind_monthly[wind_monthly['Month_Name'] == m]['wind_speed'].dropna().values for m in month_order]
+violin_one(axes[3], wind_data, 'Wind Speed (Grid-Month Mean, 2019–2024)', 'm/s')
+
+axes[0].text(-0.12, 1.05, 'B', transform=axes[0].transAxes,
+         fontsize=25, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+plt.tight_layout(rect=[0, 0, 1, 0.96])
+plt.savefig(OUTPUT_DIR / '02_ERA_EDA1-2.png', dpi=300, bbox_inches='tight')
+print(f"   Saved: {OUTPUT_DIR / 'era5_violin_all_2x2.png'}")
+plt.show()
+```
+
+```{python}
+
+df_july_2024 = df_era5[
+    (df_era5['Year'] == 2024) & 
+    (df_era5['Month'] == 7)
+].copy()
+
+print(f"\nJuly 2024 ERA5 data:")
+print(f"   Records: {len(df_july_2024):,}")
+print(f"   Grids: {df_july_2024['grid_id'].nunique()}")
+print(f"   Date range: {df_july_2024['Date'].min()} to {df_july_2024['Date'].max()}")
+
+print("\nComputing grid-level monthly statistics...")
+grid_july_stats = df_july_2024.groupby('grid_id').agg({
+    'temperature_celsius': 'mean',
+    'precipitation_mm': 'sum',
+    'volumetric_soil_water_layer_1': 'mean',
+    'wind_speed': 'mean'
+}).reset_index()
+
+grid_july_stats.columns = [
+    'grid_id', 'temp_mean', 'precip_sum', 
+    'soil_moisture_mean', 'wind_speed_mean'
+]
+
+print(grid_july_stats.describe().round(2))
+
+grids_with_stats = grids_albers.merge(grid_july_stats, on='grid_id', how='left')
+print(f"\n Grids with statistics: {len(grids_with_stats)}")
+
+# slect July fire points
+fire_july_2024 = fire_albers[
+    (fire_albers['YEAR'] == 2024) & 
+    (fire_albers['MONTH'] == 7)
+].copy()
+
+print(f"\nFire points in July 2024: {len(fire_july_2024)}")
+
+# fire points per grid
+print("\nComputing fire counts per grid...")
+grid_fire_july = gpd.sjoin(
+    grids_albers,
+    fire_july_2024,
+    how='left',
+    predicate='contains'
+).groupby('grid_id').size().reset_index(name='fire_count')
+
+grids_with_fire = grids_albers.merge(grid_fire_july, on='grid_id', how='left')
+grids_with_fire['fire_count'] = grids_with_fire['fire_count'].fillna(0).astype(int)
+
+
+
+
+print("\n Creating spatial choropleth maps ...")
+
+fig3, axes = plt.subplots(2, 2, figsize=(20, 18), constrained_layout=True)
+axes = axes.ravel()
+
+spatial_vars = [
+    ('temp_mean', 'Temperature (Mean °C)', 'RdYlBu_r'),
+    ('precip_sum', 'Precipitation (Total mm)', 'Blues'),
+    ('soil_moisture_mean', 'Soil Moisture L1 (Mean m³/m³)', 'YlGnBu'),
+    ('wind_speed_mean', 'Wind Speed (Mean m/s)', 'Greens'),
+]
+
+for i, (var, title, cmap) in enumerate(spatial_vars):
+    ax = axes[i]
+
+    grids_with_stats.plot(
+        column=var,
+        ax=ax,
+        cmap=cmap,
+        edgecolor='gray',
+        linewidth=0.2,
+        alpha=0.9,
+        legend=False,
+        missing_kwds={'color': 'lightgray'}
+    )
+
+    # add fires
+    if len(fire_july_2024) > 0:
+        fire_july_2024.plot(ax=ax, color='black', 
+                            markersize=6, marker='x',
+                            linewidth=1.2, alpha=0.6)
+
+    ax.set_title(f'{title}', fontsize=20, fontweight='bold', pad=8)
+    # ax.set_xlabel([''])
+    # ax.set_ylabel([''])
+    ax.ticklabel_format(style='plain', axis='both')
+
+
+    v = grids_with_stats[var]
+    norm = mpl.colors.Normalize(vmin=np.nanmin(v), vmax=np.nanmax(v))
+    sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="3.5%", pad=0.12)
+    cb = plt.colorbar(sm, cax=cax)
+    cb.ax.tick_params(labelsize=15)
+# axes[0].text(-0.12, 1.05, 'C', transform=axes[0].transAxes,
+#          fontsize=25, fontweight='bold', va='bottom', ha='left', clip_on=False)
+
+# plt.tight_layout(rect=[0, 0, 1, 0.97])
+plt.savefig(OUTPUT_DIR / '02_ERA_EDA1-3.png',
+            dpi=300, bbox_inches='tight')
+print(f"   Saved: {OUTPUT_DIR / 'era5_spatial_july2024_2x2.png'}")
+plt.show()
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,788 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import os
+import re
+import glob
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+from libpysal.weights import Queen
+from esda.moran import Moran
+from esda.getisord import G_Local
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+# PROJECT_ROOT = PROJECT_ROOT.parents[1]
+FIRE_DIR = PROJECT_ROOT/'Processed Data'/'Fire Points'/'Fire Points.shp'
+GRID_DIR = PROJECT_ROOT/'Processed Data'/'Grid'/'STATCAN0.25'/'BC_grids_boundary0.25.geojson'
+BOUND_DIR = PROJECT_ROOT/'Processed Data'/'Boundary'/'BC'/'BC_boundary_simple.geojson'
+
+OUTPUT_DIR = PROJECT_ROOT/'Output'/'Figures'/'Fire Points'
+```
+
+```{python}
+grid = gpd.read_file(GRID_DIR)
+fire_points = gpd.read_file(FIRE_DIR)
+bc_boundary = gpd.read_file(BOUND_DIR)
+
+## data combinations
+dates = pd.date_range('2019-01-01', '2024-12-31', freq='D')
+```
+
+
+## Temporal Analysis
+
+```{python}
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
+
+# annual fire counts
+yearly_counts = fire_points.groupby('YEAR').size()
+ax1.bar(yearly_counts.index, yearly_counts.values, color='darkorange', edgecolor='black')
+ax1.set_title('Annual Fire Count (2019-2024)', fontsize=14, fontweight='bold')
+ax1.set_xlabel('Year', fontsize=12)
+ax1.set_ylabel('Fire Count', fontsize=12)
+ax1.grid(axis='y', alpha=0.3)
+
+for i, v in enumerate(yearly_counts.values):
+    ax1.text(yearly_counts.index[i], v + 50, str(v), 
+             ha='center', va='bottom', fontweight='bold')
+
+# annual burned
+yearly_area = fire_points.groupby('YEAR')['SIZE_HA'].sum() / 1000  
+ax2.bar(yearly_area.index, yearly_area.values, color='coral', edgecolor='black')
+ax2.set_title('Annual Burned Area (2019-2024)', fontsize=14, fontweight='bold')
+ax2.set_xlabel('Year', fontsize=12)
+ax2.set_ylabel('Burned Area (1000 ha)', fontsize=12)
+ax2.grid(axis='y', alpha=0.3)
+
+plt.tight_layout()
+
+# plt.savefig(
+#     f"{OUTPUT_DIR}/03_Annual_Fire_Counts.png",
+#     dpi=300,
+#     bbox_inches="tight"
+# )
+
+plt.show()
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(18, 8))
+
+monthly_dist = fire_points.groupby('MONTH').size()
+months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+bars = ax.bar(range(1, 13), monthly_dist.values, 
+              color=['lightblue']*3 + ['darkorange']*6 + ['lightblue']*3,
+              edgecolor='black')
+
+ax.set_xticks(range(1, 13))
+ax.set_xticklabels(months, fontsize=11)
+ax.set_title('Monthly Fire Distribution (All Years)', fontsize=14, fontweight='bold')
+ax.set_xlabel('Month', fontsize=12)
+ax.set_ylabel('Fire Count', fontsize=12)
+ax.grid(axis='y', alpha=0.3)
+
+# fire season
+ax.axvspan(3.5, 9.5, alpha=0.1, color='red', label='Fire Season (Apr-Sep)')
+ax.legend()
+
+for i, v in enumerate(monthly_dist.values):
+    ax.text(i+1, v + 50, str(v), ha='center', va='bottom', fontsize=9)
+
+plt.tight_layout()
+
+# plt.savefig(
+#     f"{OUTPUT_DIR}/03_Monthly_Fire_Counts.png",
+#     dpi=300,
+#     bbox_inches="tight"
+# )
+
+plt.show()
+
+
+fire_points['is_fire_season'] = fire_points['MONTH'].between(5, 9)
+fire_season_pct = fire_points['is_fire_season'].mean() * 100
+print(f"\nFire season (May-Sep) accounts for {fire_season_pct:.1f}% of all fires")
+```
+
+```{python}
+## combine 
+
+fig = plt.figure(figsize=(18, 13.5))
+gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.1])
+
+ax1 = fig.add_subplot(gs[0, 0])  # A
+ax2 = fig.add_subplot(gs[0, 1])  # B
+ax3 = fig.add_subplot(gs[1, :])  # C (span two columns)
+
+# Annual Fire Count
+yearly_counts = fire_points.groupby('YEAR').size()
+ax1.bar(yearly_counts.index, yearly_counts.values,
+        color='darkorange', edgecolor='black')
+ax1.set_title('Annual Fire Count (2019–2024)', fontsize=14, fontweight='bold')
+ax1.set_xlabel('Year', fontsize=12)
+ax1.set_ylabel('Fire Count', fontsize=12)
+ax1.grid(axis='y', alpha=0.3)
+
+offset_a = yearly_counts.max() * 0.02
+for year, v in yearly_counts.items():
+    ax1.text(year, v + offset_a, f"{v}", ha='center', va='bottom', fontsize=10)
+
+ax1.text(-0.12, 1.05, 'A', transform=ax1.transAxes,
+         fontsize=16, fontweight='bold', va='top')
+
+# Annual Burned Area
+yearly_area = fire_points.groupby('YEAR')['SIZE_HA'].sum() / 1000  # thousand ha
+ax2.bar(yearly_area.index, yearly_area.values,
+        color='coral', edgecolor='black')
+ax2.set_title('Annual Burned Area (2019–2024)', fontsize=14, fontweight='bold')
+ax2.set_xlabel('Year', fontsize=12)
+ax2.set_ylabel('Burned Area (1000 ha)', fontsize=12)
+ax2.grid(axis='y', alpha=0.3)
+
+offset_b = yearly_area.max() * 0.02
+for year, v in yearly_area.items():
+    ax2.text(year, v + offset_b, f"{v:.1f}", ha='center', va='bottom', fontsize=10)
+
+ax2.text(-0.12, 1.05, 'B', transform=ax2.transAxes,
+         fontsize=16, fontweight='bold', va='top')
+
+
+# Monthly Fire Distribution
+monthly_dist = fire_points.groupby('MONTH').size()
+months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+ax3.bar(range(1, 13), monthly_dist.values,
+        color=['lightblue'] * 3 + ['darkorange'] * 6 + ['lightblue'] * 3,
+        edgecolor='black')
+
+ax3.set_xticks(range(1, 13))
+ax3.set_xticklabels(months, fontsize=11)
+ax3.set_title('Monthly Fire Distribution (All Years)', fontsize=14, fontweight='bold')
+ax3.set_xlabel('Month', fontsize=12)
+ax3.set_ylabel('Fire Count', fontsize=12)
+ax3.grid(axis='y', alpha=0.3)
+
+# Fire season highlight
+ax3.axvspan(3.5, 9.5, alpha=0.1, color='red', label='Fire Season (Apr–Sep)')
+ax3.legend(frameon=False)
+
+offset_c = monthly_dist.max() * 0.02
+for i, v in enumerate(monthly_dist.values):
+    ax3.text(i + 1, v + offset_c, f"{v}", ha='center', va='bottom', fontsize=9)
+
+ax3.text(-0.03, 1.05, 'C', transform=ax3.transAxes,
+         fontsize=16, fontweight='bold', va='top')
+
+
+plt.tight_layout()
+plt.savefig(
+    f"{OUTPUT_DIR}/Figure_03_Fire_Statistics_ABC.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+plt.show()
+plt.close()
+
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(12, 6))
+
+# pivot table
+pivot_ym = fire_points.pivot_table(
+    values='FIRE_ID',
+    index='YEAR',
+    columns='MONTH',
+    aggfunc='count',
+    fill_value=0
+)
+
+# heatmap
+sns.heatmap(pivot_ym, annot=True, fmt='g', cmap='YlOrRd', 
+            cbar_kws={'label': 'Fire Count'}, ax=ax,
+            linewidths=0.5, linecolor='gray')
+
+ax.set_title('Year-Month Fire Count Heatmap', fontsize=14, fontweight='bold')
+ax.set_xlabel('Month', fontsize=12)
+ax.set_ylabel('Year', fontsize=12)
+
+
+month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+ax.set_xticklabels(month_labels, rotation=45)
+
+plt.tight_layout()
+plt.show()
+```
+
+
+
+## Spatial Analysis
+
+```{python}
+fig, ax = plt.subplots(figsize=(12, 10))
+
+## plot
+bc_boundary.plot(ax=ax, facecolor='lightgray', edgecolor='black')
+
+fire_points.plot(ax=ax, color='red', markersize=1, alpha=0.4)
+
+ax.set_title('BC Wildfire Points (2019-2024)', fontsize=14, fontweight='bold')
+ax.set_xlabel('Longitude', fontsize=12)
+ax.set_ylabel('Latitude', fontsize=12)
+ax.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(12, 10))
+
+
+colors = plt.cm.Spectral(np.linspace(0, 1, len(fire_points['YEAR'].unique())))
+color_map = dict(zip(sorted(fire_points['YEAR'].unique()), colors))
+
+bc_boundary.plot(ax=ax, facecolor='lightgray', edgecolor='black')
+for year in sorted(fire_points['YEAR'].unique()):
+    fire_year = fire_points[fire_points['YEAR'] == year]
+    fire_year.plot(ax=ax, color=color_map[year], 
+                   markersize=3, alpha=0.6, label=str(year))
+
+ax.set_title('BC Wildfire Points by Year (2019-2024)', 
+             fontsize=14, fontweight='bold')
+ax.set_xlabel('Longitude', fontsize=12)
+ax.set_ylabel('Latitude', fontsize=12)
+ax.legend(loc='best', fontsize=10)
+ax.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+
+```{python}
+# transform crs
+fire_albers = fire_points.to_crs('EPSG:3005')
+grid_albers = grid.to_crs('EPSG:3005')
+bc_albers = bc_boundary.to_crs('EPSG:3005')
+
+# create grid stats
+grid_fire_join = gpd.sjoin(
+    grid_albers,      
+    fire_albers,      
+    how='left',       
+    predicate='contains'  
+)
+grid_stats = grid_fire_join.groupby('grid_id').agg({
+    'FIRE_ID': 'count',              
+    'SIZE_HA': ['sum', 'mean', 'max'], 
+    'YEAR': [('min_year', 'min'), ('max_year', 'max')]
+}).reset_index()
+
+grid_stats.columns = [
+    'grid_id', 'fire_count', 
+    'total_area_ha', 'mean_area_ha', 'max_area_ha',
+    'first_fire_year', 'last_fire_year'
+]
+
+grids_with_counts = grid_albers.merge(
+    grid_stats,
+    on='grid_id',
+    how='left'
+)
+
+grids_with_counts['fire_count'] = grids_with_counts['fire_count'].fillna(0)
+grids_with_counts['total_area_ha'] = grids_with_counts['total_area_ha'].fillna(0)
+
+# compuate area and density
+grids_with_counts['area_km2'] = grids_with_counts.geometry.area / 1_000_000
+grids_with_counts['fire_density'] = (
+    grids_with_counts['fire_count'] / grids_with_counts['area_km2']
+)
+
+
+# Getis-Ord Gi* hot spot analysis
+from libpysal.weights import Queen
+w = Queen.from_dataframe(grids_with_counts)
+gi_star = G_Local(grids_with_counts['fire_count'], w)
+
+# signigifcant hot spot
+hot_spots = grids_with_counts[gi_star.p_sim < 0.05]
+```
+
+
+```{python}
+fig, ax = plt.subplots(figsize=(14, 12))
+
+# color by grid
+grids_with_counts.plot(
+    column='fire_count',
+    ax=ax,
+    cmap='YlOrRd',
+    legend=True,
+    legend_kwds={
+        'label': 'Fire Count per Grid',
+        'orientation': 'horizontal',
+        'shrink': 0.8
+    },
+    edgecolor='gray',
+    linewidth=0.3,
+    alpha=0.9
+)
+
+
+fire_albers.plot(ax=ax, color='black', markersize=0.5, alpha=0.2)
+
+ax.set_title('BC Wildfire Density (2019-2024)', 
+             fontsize=16, fontweight='bold', pad=20)
+ax.set_xlabel('Easting (m)', fontsize=12)
+ax.set_ylabel('Northing (m)', fontsize=12)
+ax.ticklabel_format(style='plain', axis='both')
+
+plt.tight_layout()
+plt.show()
+
+# Stats
+print(f"\nFire Density Statistics:")
+print(grids_with_counts['fire_count'].describe())
+print(f"\nTop 10 high-risk grids:")
+print(grids_with_counts.nlargest(10, 'fire_count')[
+    ['grid_id', 'fire_count', 'total_area_ha', 'fire_density']
+])
+```
+
+
+## Moran's I
+
+```{python}
+print("\nBuilding spatial weights matrix...")
+w = Queen.from_dataframe(grids_with_counts)  
+w.transform = 'r' 
+
+print(f" Spatial weights matrix created")
+print(f"  Mean neighbors: {w.mean_neighbors:.1f}")
+print(f"  Min neighbors: {w.min_neighbors}")
+print(f"  Max neighbors: {w.max_neighbors}")
+
+# globaMoran's I 
+print("\nCalculating Global Moran's I...")
+moran = Moran(grids_with_counts['fire_count'], w)
+
+print(f"\nGlobal Moran's I Results:")
+print(f"  Moran's I: {moran.I:.4f}")
+print(f"  Expected I: {moran.EI:.4f}")
+print(f"  p-value: {moran.p_sim:.4f}")
+print(f"  z-score: {moran.z_sim:.4f}")
+
+if moran.p_sim < 0.01:
+    print(f"   Significant spatial clustering detected! (p<0.01)")
+elif moran.p_sim < 0.05:
+    print(f"   Significant spatial clustering detected! (p<0.05)")
+else:
+    print(f" No significant spatial clustering (p>0.05)")
+
+# Moran's I scatterplot
+from splot.esda import moran_scatterplot
+import matplotlib.pyplot as plt
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+moran_scatterplot(moran, ax=ax1, aspect_equal=True)
+ax1.set_title(f"Moran's I Scatterplot\nI={moran.I:.4f}, p={moran.p_sim:.4f}",
+              fontsize=14, fontweight='bold')
+ax1.set_xlabel('Fire Count (standardized)', fontsize=12)
+ax1.set_ylabel('Spatial Lag (standardized)', fontsize=12)
+
+# permutation histogram
+ax2.hist(moran.sim, bins=30, color='gray', edgecolor='black', alpha=0.7)
+ax2.axvline(moran.I, color='red', linestyle='--', linewidth=2,
+            label=f"Observed I = {moran.I:.4f}")
+ax2.axvline(moran.EI, color='blue', linestyle='--', linewidth=2,
+            label=f"Expected I = {moran.EI:.4f}")
+ax2.set_title('Permutation Distribution', fontsize=14, fontweight='bold')
+ax2.set_xlabel("Moran's I", fontsize=12)
+ax2.set_ylabel('Frequency', fontsize=12)
+ax2.legend(fontsize=11)
+ax2.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+```
+
+
+```{python}
+# Getis-Ord Gi* 
+print("\nCalculating Getis-Ord Gi* statistics...")
+gi_star = G_Local(grids_with_counts['fire_count'], w)
+
+grids_with_counts['gi_star'] = gi_star.Zs
+grids_with_counts['gi_pvalue'] = gi_star.p_sim
+
+#  categorize hot and cold spots
+def classify_hotspot(row):
+    if row['gi_pvalue'] >= 0.05:
+        return 'Not Significant'
+    elif row['gi_star'] > 2.58:
+        return 'Hot Spot (99%)'
+    elif row['gi_star'] > 1.96:
+        return 'Hot Spot (95%)'
+    elif row['gi_star'] > 1.65:
+        return 'Hot Spot (90%)'
+    elif row['gi_star'] < -2.58:
+        return 'Cold Spot (99%)'
+    elif row['gi_star'] < -1.96:
+        return 'Cold Spot (95%)'
+    elif row['gi_star'] < -1.65:
+        return 'Cold Spot (90%)'
+    else:
+        return 'Not Significant'
+
+grids_with_counts['hotspot_class'] = grids_with_counts.apply(
+    classify_hotspot, axis=1
+)
+
+print("\nHotspot Analysis Results:")
+print(grids_with_counts['hotspot_class'].value_counts().sort_index())
+
+## hot spots map
+# fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 10))
+
+fig, ax = plt.subplots(figsize=(18, 10))
+
+# 
+grids_with_counts.plot(
+    column='gi_star',
+    ax=ax,
+    cmap='RdBu_r', 
+    legend=True,
+    legend_kwds={
+        'label': 'Gi* Z-score',
+        'orientation': 'horizontal',
+        'shrink': 0.8
+    },
+    edgecolor='gray',
+    linewidth=0.2,
+    vmin=-3,
+    vmax=3
+)
+ax.set_title('Getis-Ord Gi* Statistics\n(Z-scores)', 
+              fontsize=14, fontweight='bold')
+ax.set_xlabel('Easting (m)', fontsize=11)
+ax.set_ylabel('Northing (m)', fontsize=11)
+
+
+# colors = {
+#     'Hot Spot (99%)': '#8B0000',    
+#     'Hot Spot (95%)': '#DC143C',     
+#     'Hot Spot (90%)': '#FF6347',    
+#     'Not Significant': '#DCDCDC',    
+#     'Cold Spot (90%)': '#87CEEB',   
+#     'Cold Spot (95%)': '#4169E1',   
+#     'Cold Spot (99%)': '#00008B'    
+# }
+
+# for category, color in colors.items():
+#     subset = grids_with_counts[grids_with_counts['hotspot_class'] == category]
+#     if len(subset) > 0:
+#         subset.plot(ax=ax2, color=color, edgecolor='gray', 
+#                    linewidth=0.2, label=category)
+
+# ax2.set_title('Hotspot Classification\n(95% confidence)', 
+#               fontsize=14, fontweight='bold')
+# ax2.set_xlabel('Easting (m)', fontsize=11)
+# ax2.set_ylabel('Northing (m)', fontsize=11)
+# ax2.legend(loc='best', fontsize=9, title='Classification')
+
+plt.tight_layout()
+plt.show()
+```
+
+
+```{python}
+fig, ax = plt.subplots(figsize=(14, 12))
+
+
+grids_with_counts.plot(ax=ax, facecolor='lightgray', 
+                       edgecolor='gray', linewidth=0.2, alpha=0.3)
+
+
+hot_spots = grids_with_counts[
+    (grids_with_counts['gi_pvalue'] < 0.05) & 
+    (grids_with_counts['gi_star'] > 1.96)
+]
+
+hot_spots.plot(
+    ax=ax,
+    column='gi_star',
+    cmap='YlOrRd',
+    legend=True,
+    legend_kwds={
+        'label': 'Gi* Z-score (Hot Spots)',
+        'orientation': 'horizontal',
+        'shrink': 0.8
+    },
+    edgecolor='black',
+    linewidth=0.5,
+    vmin=1.96,
+    vmax=hot_spots['gi_star'].max()
+)
+
+
+fire_albers.plot(ax=ax, color='black', markersize=0.5, alpha=0.3)
+
+ax.set_title(f'Significant Hot Spots (p<0.05, n={len(hot_spots)})', 
+             fontsize=16, fontweight='bold', pad=20)
+ax.set_xlabel('Easting (m)', fontsize=12)
+ax.set_ylabel('Northing (m)', fontsize=12)
+
+plt.tight_layout()
+plt.show()
+
+
+print(f"\nSignificant Hot Spots:")
+print(f"  Total: {len(hot_spots)} grids")
+print(f"  Total fires in hot spots: {hot_spots['fire_count'].sum()}")
+print(f"  Percentage of all fires: {hot_spots['fire_count'].sum()/grids_with_counts['fire_count'].sum()*100:.1f}%")
+```
+
+
+## LISA
+```{python}
+g = grids_with_counts.copy()
+
+g = g.reset_index(drop=True)
+
+
+
+## compute local Moran's I
+
+y = g["fire_count"].astype(float).values
+
+lisa = Moran_Local(y, w, permutations=999) 
+
+alpha = 0.05
+
+quad_to_label = {
+    1: "High-High",  
+    2: "Low-High",   
+    3: "Low-Low",    
+    4: "High-Low"    
+}
+
+lisa_class = np.array(["Not Significant"] * len(g), dtype=object)
+sig = lisa.p_sim < alpha
+lisa_class[sig] = [quad_to_label.get(q, "Not Significant") for q in lisa.q[sig]]
+
+g["lisa_class"] = lisa_class
+g["lisa_p"] = lisa.p_sim
+g["lisa_I"] = lisa.Is  
+
+## plot
+fig, ax = plt.subplots(figsize=(14, 12))
+
+lisa_colors = {
+    "High-High": "#D7191C",      
+    "Low-Low": "#2B83BA",         
+    "High-Low": "#FDAE61",        
+    "Low-High": "#ABDDA4",       
+    "Not Significant": "#F7F7F7"  
+}
+
+
+plot_order = ["Not Significant", "Low-Low", "High-High", "Low-High", "High-Low"]
+
+for cat in plot_order:
+    subset = g[g["lisa_class"] == cat]
+    if len(subset) == 0:
+        continue
+    subset.plot(
+        ax=ax,
+        color=lisa_colors[cat],
+        edgecolor="black",
+        linewidth=0.25,
+        alpha=0.85,
+        label=cat
+    )
+
+ax.set_title(f"LISA Cluster Map (Local Moran's I, p<{alpha})", fontsize=16, fontweight="bold", pad=20)
+ax.set_xlabel("Easting (m)", fontsize=12)
+ax.set_ylabel("Northing (m)", fontsize=12)
+ax.legend(loc="best", fontsize=11, title="Cluster Type", frameon=True)
+
+plt.tight_layout()
+plt.show()
+```
+
+
+```{python}
+fig = plt.figure(figsize=(20, 10))
+
+gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+
+#
+ax1 = fig.add_subplot(gs[0, 0])
+grids_with_counts.plot(column='fire_count', ax=ax1, cmap='YlOrRd',
+                       legend=True, edgecolor='gray', linewidth=0.2)
+ax1.set_title('A. Fire Count per Grid', fontsize=12, fontweight='bold')
+ax1.set_xlabel('Easting (m)', fontsize=10)
+ax1.set_ylabel('Northing (m)', fontsize=10)
+
+
+ax2 = fig.add_subplot(gs[0, 1])
+for category, color in colors.items():
+    subset = grids_with_counts[grids_with_counts['hotspot_class'] == category]
+    if len(subset) > 0:
+        subset.plot(ax=ax2, color=color, edgecolor='gray', linewidth=0.2)
+ax2.set_title('B. Getis-Ord Gi* Hot Spots', fontsize=12, fontweight='bold')
+ax2.set_xlabel('Easting (m)', fontsize=10)
+ax2.set_ylabel('Northing (m)', fontsize=10)
+
+
+ax3 = fig.add_subplot(gs[1, 0])
+for category, color in lisa_colors.items():
+    subset = grids_with_counts[grids_with_counts['lisa_class'] == category]
+    if len(subset) > 0:
+        subset.plot(ax=ax3, color=color, edgecolor='gray', linewidth=0.2)
+ax3.set_title('C. LISA Cluster Map', fontsize=12, fontweight='bold')
+ax3.set_xlabel('Easting (m)', fontsize=10)
+ax3.set_ylabel('Northing (m)', fontsize=10)
+
+
+ax4 = fig.add_subplot(gs[1, 1])
+ax4.contourf(xx, yy, density, levels=20, cmap='YlOrRd', alpha=0.8)
+grids_with_counts.boundary.plot(ax=ax4, edgecolor='gray', 
+                                linewidth=0.3, alpha=0.3)
+ax4.set_title('D. Kernel Density Estimation', fontsize=12, fontweight='bold')
+ax4.set_xlabel('Easting (m)', fontsize=10)
+ax4.set_ylabel('Northing (m)', fontsize=10)
+
+fig.suptitle('Spatial Analysis of BC Wildfires (2019-2024)', 
+             fontsize=16, fontweight='bold', y=0.98)
+
+plt.savefig('spatial_analysis_comprehensive.png', dpi=300, bbox_inches='tight')
+plt.show()
+```
+
+
+```{python}
+fig, ax = plt.subplots(figsize=(14, 12))
+
+grids_with_counts.plot(
+    column="fire_count",
+    ax=ax,
+    scheme="Quantiles",  
+    k=5,                 
+    cmap="OrRd",
+    edgecolor="black",
+    linewidth=0.2,
+    legend=True,
+    legend_kwds={"label": "Fire Count (Quantiles)"}
+)
+
+ax.set_title("Spatial Distribution of Fire Counts", fontsize=16, fontweight="bold")
+ax.set_xlabel("Easting (m)")
+ax.set_ylabel("Northing (m)")
+plt.tight_layout()
+plt.show()
+
+```
+
+```{python}
+hh = grids_with_counts[grids_with_counts["lisa_class"] == "High-High"]
+non_hh = grids_with_counts[grids_with_counts["lisa_class"] != "High-High"]
+
+hh_yearly = hh.groupby("YEAR")["fire_count"].sum()
+non_hh_yearly = non_hh.groupby("YEAR")["fire_count"].sum()
+
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.plot(hh_yearly.index, hh_yearly.values, label="High-High regions")
+ax.plot(non_hh_yearly.index, non_hh_yearly.values, label="Other regions")
+
+ax.set_title("Annual Fire Counts: Hotspots vs Other Regions", fontsize=14)
+ax.set_xlabel("Year")
+ax.set_ylabel("Fire Count")
+ax.legend()
+ax.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(12, 10))
+
+bc_albers.plot(ax=ax, facecolor='lightgray', edgecolor='black')
+
+
+grids_with_counts.plot(
+    column='fire_count',
+    ax=ax,
+    cmap='YlOrRd',
+    legend=True,
+    legend_kwds={'label': 'Fire Count per Grid'},
+    edgecolor='gray',
+    linewidth=0.5
+)
+
+plt.title('BC Wildfire Density (2019-2024)')
+plt.show()
+```
+
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

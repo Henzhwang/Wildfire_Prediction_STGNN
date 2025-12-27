@@ -1,0 +1,252 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+from matplotlib.colors import LinearSegmentedColormap, BoundaryNorm
+from matplotlib import cm
+import matplotlib.patches as mpatches
+from scipy import stats
+from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+PROB_DIR = PROJECT_ROOT / 'Output' / 'Model Run' / 'Merged' / 'model_probabilities.csv'
+OUTPUT_DIR = PROJECT_ROOT / 'Output' / 'Figures' / 'Spatial Analysis'
+```
+
+```{python}
+probabilities_df = pd.read_csv(PROB_DIR)
+probabilities_df['Date'] = pd.to_datetime(probabilities_df['Date'])
+probabilities_df['Month'] = probabilities_df['Date'].dt.month
+probabilities_df['Year'] = probabilities_df['Date'].dt.year
+```
+
+
+```{python}
+FIRE_SEASON = [4, 5, 6, 7, 8, 9]
+YEAR_TO_PLOT = 2024
+MODELS_TO_ANALYZE = ['Standard', 'Seq21', 'Seq7', 'Reduced']
+
+df = probabilities_df.copy()
+df['Date'] = pd.to_datetime(df['Date'])
+df['Month'] = df['Date'].dt.month
+df['Year'] = df['Date'].dt.year
+
+fire_season_df = df[(df['Year'] == YEAR_TO_PLOT) & (df['Month'].isin(FIRE_SEASON))].copy()
+```
+
+```{python}
+# observed_risk = mean(Fire_occurred) over fire-season days in 2024
+agg_dict = {
+    'centroid_lon': 'first',
+    'centroid_lat': 'first',
+    'Fire_occurred': 'mean',
+    'Date': 'count'
+}
+risk_surface = fire_season_df.groupby('grid_id').agg(agg_dict).reset_index()
+risk_surface = risk_surface.rename(columns={
+    'Fire_occurred': 'observed_risk',
+    'Date': 'n_days'
+})
+
+# model risks
+for m in MODELS_TO_ANALYZE:
+    prob_col = f'{m}_prob'
+    if prob_col not in fire_season_df.columns:
+        raise ValueError(f"Missing probability column: {prob_col}")
+    model_mean = fire_season_df.groupby('grid_id')[prob_col].mean().reset_index(name=f'{m}_risk')
+    risk_surface = risk_surface.merge(model_mean, on='grid_id', how='left')
+
+risk_surface = risk_surface.fillna(0)
+
+print("Observed risk summary (2024 fire season):")
+print(risk_surface['observed_risk'].describe(percentiles=[.5,.9,.95,.99]))
+print()
+```
+
+
+## robust normalization
+```{python}
+def robust_norm(values, q=0.99):
+    vmax = np.quantile(values, q)
+    return Normalize(vmin=0, vmax=vmax if vmax > 0 else 1e-12)
+
+def plot_scatter(ax, x, y, c, title, norm, cmap):
+    sc = ax.scatter(
+        x, y, c=c, cmap=cmap, norm=norm,
+        s=13, alpha=0.9, edgecolors='none'
+    )
+    ax.set_title(title, fontsize=18, fontweight='bold', pad=8)
+    ax.set_xlabel('Longitude', fontsize=17)
+    ax.set_ylabel('Latitude', fontsize=17)
+    ax.grid(True, alpha=0.2, linestyle='--')
+    ax.set_facecolor('#f7f7f7')
+    return sc
+```
+
+```{python}
+CMAP = plt.cm.YlOrRd
+
+fig = plt.figure(figsize=(16, 14))
+gs = fig.add_gridspec(
+    nrows=3, ncols=2,
+    height_ratios=[1.5, 1.0, 1.0],  # Observed
+    hspace=0.35, wspace=0.18
+)
+
+
+# Observed 
+ax0 = fig.add_subplot(gs[0, :])
+obs_norm = robust_norm(risk_surface['observed_risk'].values, q=0.99)
+sc0 = plot_scatter(
+    ax0,
+    risk_surface['centroid_lon'], risk_surface['centroid_lat'],
+    risk_surface['observed_risk'],
+    title='Observed mean occurrence rate (2024 Apr–Sep)',
+    norm=obs_norm,
+    cmap=CMAP
+)
+cbar0 = fig.colorbar(sc0, ax=ax0, fraction=0.03, pad=0.02)
+cbar0.set_label('Mean occurrence rate', fontsize=10)
+
+# Model panels 2x2
+positions = [gs[1,0], gs[1,1], gs[2,0], gs[2,1]]
+for m, pos in zip(MODELS_TO_ANALYZE, positions):
+    ax = fig.add_subplot(pos)
+    col = f'{m}_risk'
+    norm = robust_norm(risk_surface[col].values, q=0.99)
+
+    sc = plot_scatter(
+        ax,
+        risk_surface['centroid_lon'], risk_surface['centroid_lat'],
+        risk_surface[col],
+        title=f'{m}',
+        norm=norm,
+        cmap=CMAP
+    )
+    cbar = fig.colorbar(sc, ax=ax, fraction=0.04, pad=0.02)
+    cbar.set_label('Mean predicted prob', fontsize=11)
+
+# fig.suptitle(
+#     'BC Wildfire Risk Surface (2024 Fire Season): Spatial Pattern Comparison',
+#     fontsize=16, fontweight='bold', y=0.98
+# )
+
+output_file = OUTPUT_DIR / '05_spatial_analysis.png'
+plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
+print(f"Saved: {output_file}")
+
+plt.show()
+```
+
+
+## Difference maps
+```{python}
+fig, axes = plt.subplots(2, 2, figsize=(18, 12), sharex=True, sharey=True)
+axes = axes.flatten()
+
+for ax, m in zip(axes, MODELS_TO_ANALYZE):
+    diff = risk_surface[f'{m}_risk'] - risk_surface['observed_risk']
+    v = np.quantile(np.abs(diff.values), 0.99)
+    sc = ax.scatter(
+        risk_surface['centroid_lon'], risk_surface['centroid_lat'],
+        c=diff, cmap='RdBu_r', vmin=-v, vmax=v, s=14, alpha=0.9, edgecolors='none'
+    )
+    mae = np.mean(np.abs(diff))
+    rmse = np.sqrt(np.mean(diff**2))
+    ax.set_title(f'{m}: Pred − Obs \\nMAE={mae:.4f} | RMSE={rmse:.4f}',
+                 fontsize=12, fontweight='bold')
+    ax.grid(True, alpha=0.25, linestyle='--')
+    ax.set_facecolor('#f8f9fa')
+    plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+
+fig.suptitle(
+    'Spatial Bias Map: Predicted - Observed occurrence rate',
+    fontsize=16, fontweight='bold', y=0.98
+)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

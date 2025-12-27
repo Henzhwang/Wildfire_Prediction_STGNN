@@ -1,0 +1,249 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import os
+import re
+import glob
+from tqdm import tqdm
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+import seaborn as sns
+import matplotlib.pyplot as plt
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+DATA_DIR = PROJECT_ROOT/'Processed Data'/'grid_all.parquet'
+
+OUTPUT_DIR = PROJECT_ROOT/'Processed Data'
+```
+
+
+## load
+
+```{python}
+df = pd.read_parquet(DATA_DIR)
+df.shape
+```
+
+
+## Features
+
+```{python}
+## temperature lags
+df['temp_lag1'] = df['temperature_2m'].shift(1)
+df['temp_lag3'] = df['temperature_2m'].shift(3)
+df['temp_lag7'] = df['temperature_2m'].shift(7)
+
+## temperature rolling
+df['temp_rol3'] = df['temperature_2m'].shift(1).rolling(3, min_periods = 1).mean()
+df['temp_rol7'] = df['temperature_2m'].shift(1).rolling(7, min_periods=1).mean()
+df['temp_rol30'] = df['temperature_2m'].shift(1).rolling(30, min_periods = 1).mean()
+
+## temperature std
+df['temp_std7'] = df['temperature_2m'].shift(1).rolling(7, min_periods=1).std()
+df['temp_std30'] = df['temperature_2m'].shift(1).rolling(30, min_periods=1).std()
+
+## preciption
+df['precip_sum7'] = df['total_precipitation_sum'].rolling(7, min_periods=1).sum()
+df['precip_sum30'] = df['total_precipitation_sum'].rolling(30, min_periods=1).sum()
+df['precip_sum60'] = df['total_precipitation_sum'].rolling(60, min_periods=1).sum()
+
+## dry days
+df['dry_days'] = (df['total_precipitation_sum'] < 1.0).astype(int)
+df['consecutive_dry_days'] = df.groupby(
+        (df['dry_days'] != df['dry_days'].shift()).cumsum()
+    )['dry_days'].cumsum()
+
+## wind speed
+df['wind_speed'] = np.sqrt(
+    df['u_component_of_wind_10m']**2 + 
+    df['v_component_of_wind_10m']**2
+)
+df['wind_max7'] = df['wind_speed'].rolling(7, min_periods=1).max()
+
+## wind direction
+df['wind_dir'] = (270 - np.degrees(np.arctan2(
+    df['v_component_of_wind_10m'], 
+    df['u_component_of_wind_10m']
+))) % 360
+    
+df['wind_dir_sin'] = np.sin(np.radians(df['wind_dir']))
+df['wind_dir_cos'] = np.cos(np.radians(df['wind_dir']))
+
+## soli temperature
+df['soil_moisture_lag7'] = df['volumetric_soil_water_layer_1'].shift(7)
+df['soil_moisture_trend'] = df['volumetric_soil_water_layer_1'] - df['soil_moisture_lag7']
+```
+
+```{python}
+## Seasonal
+## to make date continous
+df['month_sin'] = np.sin(2 * np.pi * df['Month'] / 12)
+df['month_cos'] = np.cos(2 * np.pi * df['Month'] / 12)
+# df['day_sin'] = np.sin(2 * np.pi * df['day_of_year'] / 365)
+# df['day_cos'] = np.cos(2 * np.pi * df['day_of_year'] / 365)
+
+## high risk fire season
+df['is_fire_season'] = df['Month'].isin([4, 5, 6, 7, 8, 9]).astype(int)
+```
+
+```{python}
+## historical
+## never had fire is 9999
+df['last_fire_date'] = df['Date'].where(df['Fire_occurred'] == 1)
+df['last_fire_date'] = df.groupby('grid_id')['last_fire_date'].ffill()
+df['days_since_last_fire'] = (df['Date'] - df['last_fire_date']).dt.days
+# Never had fire = 9999
+df['days_since_last_fire'] = df['days_since_last_fire'].fillna(9999).astype(int)
+df = df.drop(columns=['last_fire_date'])
+df.loc[df['Fire_occurred'] == 1, 'days_since_last_fire'] = 0
+# df['days_since_last_fire'] = df['days_since_last_fire'].fillna(9999)
+
+##
+df['historical_fire_count'] = df.groupby('grid_id')['Fire_occurred'].shift(1).fillna(0).cumsum()
+# Historical fire prob of one grid in one month
+df['historical_fire_prob_month'] = df.groupby(['grid_id', 'Month'])['Fire_occurred'].transform(
+    lambda x: x.expanding().mean()
+)
+```
+
+
+```{python}
+## terrain features
+## Elevation-temperature interaction (high-altitude low-temperature effect)
+df['elevation_temp_interaction'] = df['elevation'] * df['temperature_2m']
+
+## Slope-wind speed interaction (the acceleration effect of wind speed on a slope)
+df['slope_wind_interaction'] = df['slope'] * df['wind_speed']
+
+## Extreme weather
+df['heatwave'] = (df['temp_rol7'] > df.groupby(['grid_id', 'Month'])['temperature_2m'].transform('quantile', 0.95)).astype(int)
+df['extreme_wind'] = (df['wind_speed'] > df['wind_speed'].quantile(0.90)).astype(int)
+df['extreme_drought'] = (df['consecutive_dry_days'] > 30).astype(int)
+
+# Vegetation flammability (high NDVI + drought = high flammability)
+df['fuel_load'] = df['NDVI_mean'] * df['consecutive_dry_days']
+
+# Vegetation moisture pressure (NDVI × Soil moisture)
+df['vegetation_moisture_stress'] = df['NDVI_mean'] / (df['volumetric_soil_water_layer_1'] + 0.01)
+```
+
+```{python}
+# %%
+na_summary = (
+    df.isna()
+      .sum()
+      .sort_values(ascending=False)
+)
+
+print("NA count per column (non-zero only):")
+print(na_summary[na_summary > 0])
+```
+
+```{python}
+df = df.fillna(0.0)
+```
+
+```{python}
+# %%
+na_summary = (
+    df.isna()
+      .sum()
+      .sort_values(ascending=False)
+)
+
+print("NA count per column (non-zero only):")
+print(na_summary[na_summary > 0])
+```
+
+```{python}
+output_file = os.path.join(OUTPUT_DIR,  f"grid_all_features.parquet")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df.to_parquet(output_file, index=False)
+print(f"Saved to: {output_file}\n")
+```
+
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

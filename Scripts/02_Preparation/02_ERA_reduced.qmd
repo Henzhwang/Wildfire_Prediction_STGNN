@@ -1,0 +1,201 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import os
+import re
+import glob
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+import seaborn as sns
+import matplotlib.pyplot as plt
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+ERA5_DIR = PROJECT_ROOT/'Processed Data'/'Rasters'/'grid_era5_combined.parquet'
+OUTPUT_DIR = PROJECT_ROOT/'Processed Data'/'Rasters'
+```
+
+```{python}
+df_era5 = pd.read_parquet(ERA5_DIR)
+```
+
+```{python}
+corr_era5 = df_era5.iloc[:, 4:].corr(method='spearman')
+```
+
+```{python}
+mask = np.triu(np.ones_like(corr_era5, dtype=bool))
+
+plt.figure(figsize=(25, 25))
+
+sns.heatmap(
+    corr_era5,
+    mask=mask,                 
+    cmap='coolwarm',
+    annot=True,                
+    fmt=".2f",
+    square=True,
+    cbar_kws={"shrink": 0.7},
+    annot_kws={"size": 16}     
+)
+
+plt.xticks(rotation=45, ha='right', fontsize=22)
+plt.yticks(rotation=0, fontsize=22)
+
+
+cbar = plt.gca().collections[0].colorbar
+cbar.ax.tick_params(labelsize=20)
+
+# plt.title("Correlation Heatmap (Lower Triangle)", fontsize=26, pad=20)
+PROJECT_ROOT/'Output'/'Figures'/'Grid'
+outpath = PROJECT_ROOT/'Output'/'Figures'/'ERA5' / "03_ERA5_Corr.png"
+plt.savefig(outpath, dpi=300, bbox_inches="tight")
+
+plt.tight_layout()
+plt.show()
+```
+
+
+```{python}
+sns.clustermap(
+    corr_era5,
+    cmap='coolwarm',
+    figsize=(18, 18),
+    col_cluster=True,
+    row_cluster=True,
+    dendrogram_ratio=(0.1, 0.1),
+    cbar_pos=(0.02, 0.8, 0.03, 0.18)
+)
+plt.show()
+```
+
+
+```{python}
+threshold = 0.75
+mask = corr_era5.abs() > threshold
+
+plt.figure(figsize=(18,16))
+sns.heatmap(corr_era5.where(mask), cmap='coolwarm', annot=False)
+plt.title("Correlation Heatmap (|r| > 0.7)", fontsize=20)
+plt.show()
+```
+
+We see some of the varaibles are highly correlated. We would like to reduced some of the variables. We are reducing to:
+
+```{python}
+ERA5_VARIABLES_REDUCED = [
+    'temperature_2m',
+    'total_precipitation_sum',
+    'surface_runoff_sum',
+    'u_component_of_wind_10m',
+    'v_component_of_wind_10m',
+    'surface_pressure',
+    'total_evaporation_sum',
+    'surface_solar_radiation_downwards_sum',
+    'surface_thermal_radiation_downwards_sum',
+    'soil_temperature_level_1',
+    'volumetric_soil_water_layer_1',
+    'snowfall_sum',
+    'snow_depth_water_equivalent'
+]
+```
+
+```{python}
+df_era5_reduced = df_era5[['grid_id', 'Date', 'Year', 'Month'] + ERA5_VARIABLES_REDUCED]
+```
+
+```{python}
+df_era5_reduced.shape
+df_era5_reduced.head()
+```
+
+```{python}
+output_file = os.path.join(OUTPUT_DIR,  f"grid_era5_reduced.parquet")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+df_era5_reduced.to_parquet(output_file, index=False)
+print(f"Saved to: {output_file}\n")
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

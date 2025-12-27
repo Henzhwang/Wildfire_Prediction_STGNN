@@ -1,0 +1,11 @@
+{
+  "hash": "b78af2070fa77f4c101d2761121b6116",
+  "result": {
+    "markdown": "---\ntitle: \"STA4101\"\n---\n\n## Quarto\n\nQuarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.\n\n",
+    "supporting": [
+      "STA4101_files"
+    ],
+    "filters": [],
+    "includes": {}
+  }
+}

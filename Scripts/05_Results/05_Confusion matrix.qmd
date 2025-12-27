@@ -1,0 +1,317 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, classification_report
+from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+PRED_DIR = PROJECT_ROOT / 'Output' / 'Model Run' / 'Merged' / 'model_predictions.csv'
+OUTPUT_DIR = PROJECT_ROOT / 'Output' / 'Figures' / 'Temporal Analysis'
+```
+
+```{python}
+predictions_df = pd.read_csv(PRED_DIR)
+```
+
+```{python}
+# Get model names
+pred_cols = [col for col in predictions_df.columns if col.endswith('_pred')]
+model_names = [col.replace('_pred', '') for col in pred_cols]
+
+print(f"Models found: {len(model_names)}")
+for i, model in enumerate(model_names, 1):
+    print(f"   {i}. {model}")
+print()
+```
+
+```{python}
+## conf mat
+
+confusion_matrices = {}
+classification_reports = {}
+
+y_true = predictions_df['Fire_occurred'].values
+
+for model_name in model_names:
+    pred_col = f'{model_name}_pred'
+    y_pred = predictions_df[pred_col].values
+    
+    # Calculate confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    confusion_matrices[model_name] = cm
+    
+    # Calculate classification report
+    report = classification_report(y_true, y_pred, 
+                                   target_names=['No Fire', 'Fire'],
+                                   output_dict=True,
+                                   zero_division=0)
+    classification_reports[model_name] = report
+    
+    # Print summary
+    tn, fp, fn, tp = cm.ravel()
+    print(f"{model_name}:")
+    print(f"   TN={tn:>7,}  FP={fp:>7,}")
+    print(f"   FN={fn:>7,}  TP={tp:>7,}")
+    print(f"   Accuracy:  {(tp+tn)/(tp+tn+fp+fn):.4f}")
+    print(f"   Precision: {tp/(tp+fp) if (tp+fp) > 0 else 0:.4f}")
+    print(f"   Recall:    {tp/(tp+fn) if (tp+fn) > 0 else 0:.4f}")
+    print()
+```
+
+```{python}
+
+# Set style
+# plt.style.use('seaborn-v0_8-darkgrid')
+sns.set_palette("husl")
+
+# Create figure with subplots
+n_models = len(model_names)
+n_cols = 3
+n_rows = (n_models + n_cols - 1) // n_cols
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4.5*n_rows))
+axes = axes.flatten() if n_models > 1 else [axes]
+
+for idx, model_name in enumerate(model_names):
+    ax = axes[idx]
+    cm = confusion_matrices[model_name]
+    
+    # Get metrics
+    tn, fp, fn, tp = cm.ravel()
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    
+    # Plot confusion matrix
+    sns.heatmap(cm, annot=True, fmt=',d', cmap='Blues', 
+                cbar=True, ax=ax,
+                xticklabels=['No Fire (0)', 'Fire (1)'],
+                yticklabels=['No Fire (0)', 'Fire (1)'],
+                annot_kws={'size': 12, 'weight': 'bold'})
+    
+    # Add title with metrics
+    title = f'{model_name}\n'
+    title += f'Acc={accuracy:.3f} | Prec={precision:.3f} | Rec={recall:.3f} | F1={f1:.3f}'
+    ax.set_title(title, fontsize=12, fontweight='bold', pad=10)
+    
+    ax.set_xlabel('Predicted Label', fontsize=11, fontweight='bold')
+    ax.set_ylabel('True Label', fontsize=11, fontweight='bold')
+
+# Hide extra subplots
+for idx in range(n_models, len(axes)):
+    axes[idx].axis('off')
+
+plt.suptitle('Confusion Matrices - BC Wildfire Prediction Models', 
+             fontsize=16, fontweight='bold', y=1.00)
+plt.tight_layout()
+
+# Save figure
+output_file = OUTPUT_DIR / 'confusion_matrices_all_models.png'
+plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
+print(f"Saved: {output_file}\n")
+
+plt.show()
+```
+
+
+
+```{python}
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4.5*n_rows))
+axes = axes.flatten() if n_models > 1 else [axes]
+
+for idx, model_name in enumerate(model_names):
+    ax = axes[idx]
+    cm = confusion_matrices[model_name]
+    
+    # Normalize by true label (rows)
+    cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    
+    # Get metrics
+    tn, fp, fn, tp = cm.ravel()
+    total = tn + fp + fn + tp
+    
+    # Plot normalized confusion matrix
+    sns.heatmap(cm_normalized, annot=True, fmt='.2%', cmap='RdYlGn', 
+                cbar=True, ax=ax, vmin=0, vmax=1,
+                xticklabels=['No Fire (0)', 'Fire (1)'],
+                yticklabels=['No Fire (0)', 'Fire (1)'],
+                annot_kws={'size': 12, 'weight': 'bold'})
+    
+    # Add title
+    title = f'{model_name} (Normalized)\n'
+    title += f'TN={tn:,} | FP={fp:,} | FN={fn:,} | TP={tp:,}'
+    ax.set_title(title, fontsize=12, fontweight='bold', pad=10)
+    
+    ax.set_xlabel('Predicted Label', fontsize=11, fontweight='bold')
+    ax.set_ylabel('True Label', fontsize=11, fontweight='bold')
+
+# Hide extra subplots
+for idx in range(n_models, len(axes)):
+    axes[idx].axis('off')
+
+plt.suptitle('Normalized Confusion Matrices - BC Wildfire Prediction Models', 
+             fontsize=16, fontweight='bold', y=1.00)
+plt.tight_layout()
+
+# Save figure
+output_file = OUTPUT_DIR / 'confusion_matrices_normalized.png'
+plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
+print(f"Saved: {output_file}\n")
+
+plt.show()
+```
+
+```{python}
+
+comparison_data = []
+
+for model_name in model_names:
+    cm = confusion_matrices[model_name]
+    tn, fp, fn, tp = cm.ravel()
+    
+    total = tn + fp + fn + tp
+    accuracy = (tp + tn) / total
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    
+    # False positive rate and False negative rate
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+    fnr = fn / (fn + tp) if (fn + tp) > 0 else 0
+    
+    comparison_data.append({
+        'Model': model_name,
+        'TN': tn,
+        'FP': fp,
+        'FN': fn,
+        'TP': tp,
+        'Accuracy': accuracy,
+        'Precision': precision,
+        'Recall': recall,
+        'Specificity': specificity,
+        'F1-Score': f1,
+        'FPR': fpr,
+        'FNR': fnr
+    })
+
+comparison_df = pd.DataFrame(comparison_data)
+
+# Print formatted table
+print("Confusion Matrix Values:")
+print("="*100)
+print(comparison_df[['Model', 'TN', 'FP', 'FN', 'TP']].to_string(index=False))
+print()
+
+print("Performance Metrics:")
+print("="*100)
+print(comparison_df[['Model', 'Accuracy', 'Precision', 'Recall', 'F1-Score']].to_string(index=False))
+print()
+
+print("Additional Metrics:")
+print("="*100)
+print(comparison_df[['Model', 'Specificity', 'FPR', 'FNR']].to_string(index=False))
+print()
+```
+
+```{python}
+# Save comparison table
+# comparison_file = OUTPUT_DIR / 'confusion_matrix_comparison.csv'
+# comparison_df.to_csv(comparison_file, index=False)
+# print(f"Comparison table saved to: {comparison_file}\n")
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

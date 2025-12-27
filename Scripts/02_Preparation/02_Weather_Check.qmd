@@ -1,0 +1,266 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import geopandas as gpd
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+```
+
+```{python}
+weather = pd.read_csv("Processed Data/Weather/ECCC/BC_all_stations_2019_2024.csv")
+weather_geo = gpd.read_file("Processed Data/Weather/ECCC/BC_weather_stations.geojson")
+```
+
+```{python}
+weather.shape
+weather.columns
+```
+
+## Basic Check
+```{python}
+print("=" * 70)
+print("Weather Quality Check")
+print("=" * 70)
+
+print(f"\n# Observations: {len(weather):,}")
+print(f"# Rows: {len(weather.columns)}")
+
+print("\n" + "=" * 70)
+print("Stations")
+print("=" * 70)
+
+# number of stations
+n_stations = weather['Station Name'].nunique()
+print(f"\n# Stations: {n_stations}")
+
+# Observations per station
+records_per_station = weather.groupby('Station Name').size()
+print(f"\nObservation per Station:")
+print(f"  Min: {records_per_station.min():,}")
+print(f"  Max: {records_per_station.max():,}")
+print(f"  Mean: {records_per_station.mean():.0f}")
+print(f"  Median: {records_per_station.median():.0f}")
+
+# most observations
+print(f"\nMaximum Observaiond:")
+top_stations = records_per_station.nlargest(5)
+for station, count in top_stations.items():
+    print(f"  - {station}: {count:,} ")
+
+# min observations
+print(f"\nMinimum Observations:")
+bottom_stations = records_per_station.nsmallest(5)
+for station, count in bottom_stations.items():
+    print(f"  - {station}: {count:,} ")
+```
+
+## Temporal Data
+```{python}
+print("\n" + "=" * 70)
+print("Temporal")
+print("=" * 70)
+
+try:
+    weather['date'] = pd.to_datetime(weather['Date/Time'])
+except:
+    weather['date'] = pd.to_datetime(
+        weather[['Year', 'Month', 'Day']].rename(
+            columns={'Year': 'year', 'Month': 'month', 'Day': 'day'}
+        ),
+        errors='coerce'
+    )
+
+print(f"\nTime Range:")
+print(f"  Start: {weather['date'].min()}")
+print(f"  End: {weather['date'].max()}")
+print(f"  Span: {(weather['date'].max() - weather['date'].min()).days} days")
+
+# check if cover between 2019 and 2025
+expected_years = set(range(2019, 2025))
+actual_years = set(weather['Year'].unique())
+missing_years = expected_years - actual_years
+
+if missing_years:
+    print(f"\nMissing: {sorted(missing_years)}")
+else:
+    print(f"\n2019-2024 data are complete")
+
+## Yearly Records
+print(f"\nYearly distribution:")
+yearly_counts = weather['Year'].value_counts().sort_index()
+for year, count in yearly_counts.items():
+    print(f"  {year}: {count:,} obs")
+
+sns.barplot(data=yearly_counts, color="skyblue")
+
+plt.title("Yearly distribution", fontsize=14)
+plt.xlabel("Year")
+plt.ylabel("Number of observations")
+plt.xticks(rotation=45)
+plt.show()
+
+
+# Monthly
+print(f"\nMonthly distribution:")
+monthly_counts = weather['Month'].value_counts().sort_index()
+for month, count in monthly_counts.items():
+    print(f"  {month:2d} month: {count:,} obs")
+
+sns.barplot(data=monthly_counts, color="orange")
+
+plt.title("Monthly distribution", fontsize=14)
+plt.xlabel("Month")
+plt.ylabel("Number of observations")
+plt.xticks(rotation=45)
+plt.show()
+```
+
+
+## Coordinate
+```{python}
+print("\n" + "=" * 70)
+print("Coordinate Check")
+print("=" * 70)
+
+print(f"\nRange:")
+print(f"  Longitude: [{weather['Longitude (x)'].min():.4f}, {weather['Longitude (x)'].max():.4f}]")
+print(f"  Latitude:  [{weather['Latitude (y)'].min():.4f}, {weather['Latitude (y)'].max():.4f}]")
+
+# BC range
+bc_lon_range = (-140, -114)
+bc_lat_range = (48, 60)
+
+# check if all stations within BC
+in_bc = weather[
+    (weather['Longitude (x)'].between(bc_lon_range[0], bc_lon_range[1])) &
+    (weather['Latitude (y)'].between(bc_lat_range[0], bc_lat_range[1]))
+]
+
+print(f"\nLocation:")
+print(f"  Within BC: {len(in_bc):,} / {len(weather):,} ({len(in_bc)/len(weather)*100:.1f}%)")
+
+if len(in_bc) < len(weather):
+    outside_bc = weather[
+        ~((weather['Longitude (x)'].between(bc_lon_range[0], bc_lon_range[1])) &
+            (weather['Latitude (y)'].between(bc_lat_range[0], bc_lat_range[1])))
+    ]
+    print(f"  Outside of BC: {len(outside_bc):,}")
+    print(f"\n  Stations:")
+    outside_stations = outside_bc['Station Name'].unique()
+
+# Check missing coordinates
+missing_coords = weather[
+    weather['Longitude (x)'].isna() | weather['Latitude (y)'].isna()
+]
+if len(missing_coords) > 0:
+    print(f"\nCoordinate missing: {len(missing_coords):,}")
+else:
+    print(f"\n No missing coordinates.")
+```
+
+
+## Missing value
+```{python}
+print("\n" + "=" * 70)
+print("Missing value")
+print("=" * 70)
+
+# Key varibles missing value
+key_variables = {
+    'Max Temp (°C)': 'Max Temp (°C)',
+    'Min Temp (°C)': 'Min Temp (°C)',
+    'Mean Temp (°C)': 'Mean Temp (°C)',
+    'Total Rain (mm)': 'Total Rain (mm)',
+    'Total Snow (cm)': 'Total Snow (cm)',
+    'Total Precip (mm)': 'Total Precip (mm)',
+    'Snow on Grnd (cm)': 'Snow on Grnd (cm)',
+    'Spd of Max Gust (km/h)': 'Spd of Max Gust (km/h)'
+}
+
+print(f"\nKey Variable missing pct:")
+missing_stats = []
+for var_name, col_name in key_variables.items():
+    if col_name in weather.columns:
+        missing_count = weather[col_name].isna().sum()
+        missing_pct = missing_count / len(weather) * 100
+        missing_stats.append({
+            'Variable': var_name,
+            'Missing': missing_count,
+            'Percentage': f'{missing_pct:.2f}%'
+        })
+
+missing_df = pd.DataFrame(missing_stats)
+print(missing_df.to_string(index=False))
+```
+
+
+```{python}
+print(f"\nAll columns missing pct:")
+print("=" * 70)
+
+missing_stats = []
+
+for col_name in weather.columns:
+    missing_count = weather[col_name].isna().sum()
+    missing_pct = missing_count / len(weather) * 100
+    missing_stats.append({
+        'Column': col_name,
+        'Missing Count': missing_count,
+        'Missing %': f'{missing_pct:.2f}%'
+    })
+
+# transform to DataFrame
+missing_df = pd.DataFrame(missing_stats)
+
+# sort
+missing_df['Missing_Numeric'] = missing_df['Missing %'].str.rstrip('%').astype(float)
+missing_df = missing_df.sort_values('Missing_Numeric', ascending=False)
+missing_df = missing_df.drop('Missing_Numeric', axis=1)
+
+print(missing_df.to_string(index=False))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

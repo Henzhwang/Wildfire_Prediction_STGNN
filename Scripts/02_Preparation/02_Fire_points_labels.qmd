@@ -1,0 +1,215 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import os
+import re
+import glob
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+import seaborn as sns
+import matplotlib.pyplot as plt
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+FIRE_DIR = PROJECT_ROOT/'Processed Data'/'Fire Points'/'Fire Points.shp'
+GRID_DIR = PROJECT_ROOT/'Processed Data'/'Grid'/'STATCAN0.25'/'BC_grids_boundary0.25.geojson'
+OUTPUT_DIR = PROJECT_ROOT/'Processed Data'/'Fire Points'
+```
+
+```{python}
+grid = gpd.read_file(GRID_DIR)
+fire_points = gpd.read_file(FIRE_DIR)
+
+## data combinations
+dates = pd.date_range('2019-01-01', '2024-12-31', freq='D')
+```
+
+```{python}
+## all combinations
+all_combinations = pd.MultiIndex.from_product(
+    [grid['grid_id'], dates],
+    names=['grid_id', 'Date']
+).to_frame(index=False)
+print(f'Total #: {all_combinations.shape }')
+```
+
+```{python}
+def validate_fire_dates(fire_gdf):
+    fire_gdf = fire_gdf.copy()
+
+    # ensure datetime formate
+    for col in ['REP_DATE', 'ATTK_DATE', 'OUT_DATE']:
+        if col in fire_gdf.columns:
+            fire_gdf[col] = pd.to_datetime(fire_gdf[col], errors='coerce')
+
+    date_order_violations = fire_gdf[
+        (fire_gdf['ATTK_DATE'] < fire_gdf['REP_DATE']) |
+        (fire_gdf['OUT_DATE'] < fire_gdf['ATTK_DATE'])
+    ]
+    print(f"Date Violations: {len(date_order_violations)} ")
+
+    # compute fire duration
+    mask = fire_gdf['REP_DATE'].notna() & fire_gdf['OUT_DATE'].notna()
+    fire_gdf['duration'] = np.nan
+    fire_gdf.loc[mask, 'duration'] = (
+        fire_gdf.loc[mask, 'OUT_DATE'] - fire_gdf.loc[mask, 'REP_DATE']
+    ).dt.days
+
+    print(f"\nEffective duration : {mask.sum()}")
+    print(f"Fire Avg. Duration: {fire_gdf['duration'].mean():.1f} days")
+    print(f"Longest: {fire_gdf['duration'].max():.1f} days")
+
+    return fire_gdf
+validate_fire_dates(fire_points)
+```
+
+```{python}
+## map fire points to grid
+## 1 - Fire spotted
+## 2 - No Fire
+fire_points['DATE'] = pd.to_datetime(fire_points[['YEAR', 'MONTH', 'DAY']])
+
+## earliest date spotted fire
+fire_points['EAR_DATE'] = (
+    fire_points[['DATE', 'REP_DATE', 'ATTK_DATE', 'OUT_DATE']]
+    .apply(lambda row: pd.to_datetime(row).min(), axis=1)
+)
+
+## connect fire points to the grids
+grid_fires_match = gpd.sjoin(
+    fire_points[['geometry', 'EAR_DATE']],
+    grid[['grid_id', 'geometry']],
+    how='left',
+    predicate='within'
+)
+
+## create labels
+fire_labels = (
+    grid_fires_match
+    .groupby(['grid_id', 'EAR_DATE'])
+    .size()
+    .reset_index(name='Fire_count')
+)
+fire_labels['Fire_occurred'] = 1
+
+## map
+grid_fires = all_combinations.merge(
+    fire_labels[['grid_id', 'EAR_DATE', 'Fire_occurred']],
+    left_on=['grid_id', 'Date'],
+    right_on=['grid_id', 'EAR_DATE'],
+    how='left'
+).fillna({'Fire_occurred':0})
+grid_fires['Fire_occurred'] = grid_fires['Fire_occurred'].astype(int)
+grid_fires = grid_fires.drop(columns='EAR_DATE')
+
+
+print(f"Positive sample: {grid_fires['Fire_occurred'].sum():,}")
+print(f"Negative sample: {(grid_fires['Fire_occurred']==0).sum():,}")
+```
+
+```{python}
+# output_file = os.path.join(OUTPUT_DIR,  f"grid_fire_points.csv")
+# os.makedirs(os.path.dirname(output_file), exist_ok=True)
+# grid_fires.to_csv(output_file, index=False)
+# print(f"Saved to: {output_file}\n")
+```
+
+```{python}
+fire_points['PRESCRIBED'].unique()
+fire_points['omit'].unique()
+```
+
+```{python}
+grid_fires[grid_fires['Fire_occurred'] == 1]['Fire_occurred'].count()
+```
+
+```{python}
+grid_fires[grid_fires['Fire_occurred'] == 1]['Fire_occurred'].count() / grid_fires.shape[0]
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

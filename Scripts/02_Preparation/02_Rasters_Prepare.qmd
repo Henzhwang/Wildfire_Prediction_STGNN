@@ -1,0 +1,417 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+import os
+import re
+import glob
+from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio
+```
+
+```{python}
+PROJECT_ROOT = Path().resolve()
+PROJECT_ROOT = PROJECT_ROOT.parents[1]
+RASTER_DIR = PROJECT_ROOT/'Processed Data'/'Rasters'/'RAW'
+DEM_DIR = PROJECT_ROOT/'Processed Data'/'Rasters'/'grid_dem.parquet'
+OUTPUT_DIR = PROJECT_ROOT/'Processed Data'/'Rasters'
+
+csv_files = glob.glob(os.path.join(RASTER_DIR, "*.csv"))
+```
+
+```{python}
+data = {} 
+
+for f in csv_files:
+    name = os.path.splitext(os.path.basename(f))[0]
+    data[name] = pd.read_csv(f)
+print(data.keys())
+```
+
+
+## ERA5
+
+Wide to long
+
+```{python}
+def reshape_era5_wide_to_long(df_wide):
+    
+    print("Transform ERA5...")
+    print(f"Original: {df_wide.shape}")
+    
+    # extract all column names
+    all_columns = [col for col in df_wide.columns if col != 'grid_id']
+    
+    # extract variables and dates
+    print("\nExtract varibales...")
+    column_info = []
+    
+    for col in all_columns:
+        ## Standarized date (YYYY_MM_DD)
+        ## matching: any_YYYY_MM_DD
+        match = re.search(r'(.+)_(\d{4})_(\d{2})_(\d{2})$', col)
+        
+        if match:
+            var_name = match.group(1)  
+            year = match.group(2)
+            month = match.group(3)
+            day = match.group(4)
+            date_str = f"{year}-{month}-{day}"
+            
+            column_info.append({
+                'original_col': col,
+                'variable': var_name,
+                'Date': date_str
+            })
+        else:
+            print(f"Cannot extract {col}")
+    
+    df_col_info = pd.DataFrame(column_info)
+    
+    # extract unique variables and dates
+    unique_variables = df_col_info['variable'].unique()
+    unique_dates = sorted(df_col_info['Date'].unique())
+    
+    print(f"\n{len(unique_variables)} unique variables")
+    print(f"{len(unique_dates)} unique dates")
+    print(f"From: {unique_dates[0]} to {unique_dates[-1]}")
+    
+    # creating long framework
+    n_grids = len(df_wide)
+    n_dates = len(unique_dates)
+    
+    long_data = {
+        'grid_id': np.repeat(df_wide['grid_id'].values, n_dates),
+        'Date': np.tile(unique_dates, n_grids)
+    }
+    
+    # Create column for each column
+    print("\nProcess variables...")
+    for i, var in enumerate(unique_variables, 1):
+        if i % 5 == 0:
+            print(f"Var {i}/{len(unique_variables)}: {var}")
+        
+        # Extrace all date for such variable
+        var_cols = df_col_info[df_col_info['variable'] == var].sort_values('Date')
+        
+        # extract value and reshape
+        var_values = df_wide[var_cols['original_col'].values].values
+        # flatten
+        long_data[var] = var_values.flatten() # (n_grids * n_dates,)
+    
+    # Create dateframe
+    df_long = pd.DataFrame(long_data)
+    
+    # transform to datetime
+    df_long['Date'] = pd.to_datetime(df_long['Date'])
+    # df_long['Year'] = df_long['Date'].dt.year
+    # df_long['Month'] = df_long['Date'].dt.month
+
+    ## insert year and month after Date
+    date_idx = df_long.columns.get_loc('Date')
+    df_long.insert(date_idx + 1, 'Year', df_long['Date'].dt.year)
+    df_long.insert(date_idx + 2, 'Month', df_long['Date'].dt.month)
+    
+    # order
+    df_long = df_long.sort_values(['grid_id', 'Date']).reset_index(drop=True)
+    
+    print(f"\nComplete!")
+    print(f"Shape: {df_long.shape}")
+    
+    return df_long
+
+```
+
+```{python}
+reshape_era5_wide_to_long(data['grid_era5_19'])
+```
+```{python}
+era5_names = ['grid_era5_19',
+              'grid_era5_20',
+              'grid_era5_21',
+              'grid_era5_22',
+              'grid_era5_23',
+              'grid_era5_24']
+
+era5_list = []
+
+for name in era5_names:
+    df_temp = reshape_era5_wide_to_long(data[name])
+    era5_list.append(df_temp)
+
+
+# df_era5 = pd.concat(era5_list)
+```
+
+```{python}
+MonthEnd_dates = [
+    '2019-01-31', '2019-02-28', '2019-03-31', '2019-04-30', '2019-05-31', '2019-06-30',
+    '2019-07-31', '2019-08-31', '2019-09-30', '2019-10-31', '2019-11-30', '2019-12-31',
+    '2020-01-31', '2020-02-29', '2020-03-31', '2020-04-30', '2020-05-31', '2020-06-30',
+    '2020-07-31', '2020-08-31', '2020-09-30', '2020-10-31', '2020-11-30', '2020-12-31',
+    '2021-01-31', '2021-02-28', '2021-03-31', '2021-04-30', '2021-05-31', '2021-06-30',
+    '2021-07-31', '2021-08-31', '2021-09-30', '2021-10-31', '2021-11-30', '2021-12-31',
+    '2022-01-31', '2022-02-28', '2022-03-31', '2022-04-30', '2022-05-31', '2022-06-30',
+    '2022-07-31', '2022-08-31', '2022-09-30', '2022-10-31', '2022-11-30', '2022-12-31',
+    '2023-01-31', '2023-02-28', '2023-03-31', '2023-04-30', '2023-05-31', '2023-06-30',
+    '2023-07-31', '2023-08-31', '2023-09-30', '2023-10-31', '2023-11-30', '2023-12-31',
+    '2024-01-31', '2024-02-29', '2024-03-31', '2024-04-30', '2024-05-31', '2024-06-30',
+    '2024-07-31', '2024-08-31', '2024-09-30', '2024-10-31', '2024-11-30', '2024-12-31'
+]
+
+
+df_MonthEnd = reshape_era5_wide_to_long(data['grid_era5_MonthEnd'])
+df_MonthEnd['Date'] = (
+    df_MonthEnd['Date']
+    .dt.to_period('M')
+    .dt.to_timestamp('M')
+)
+era5_list.append(df_MonthEnd)
+```
+
+```{python}
+df_era5 = pd.concat(era5_list)
+df_era5.shape
+```
+
+```{python}
+df_era5['Date'].drop_duplicates().unique()
+```
+
+```{python}
+na_summary = (
+    df_era5.isna()
+      .sum()
+      .sort_values(ascending=False)
+)
+
+print("NA count per column (non-zero only):")
+print(na_summary[na_summary > 0])
+```
+
+```{python}
+bad_grids = (
+    df_era5.groupby("grid_id")["temperature_2m"]
+      .apply(lambda s: s.isna().mean())
+)
+
+bad_grids = bad_grids[bad_grids > 0]  
+print("Number of bad grids:", len(bad_grids))
+print("Example:", bad_grids.head())
+```
+
+```{python}
+bad_grid_ids = bad_grids.index
+
+df_clean = df_era5[~df_era5["grid_id"].isin(bad_grid_ids)].copy()
+
+print("Bad Grid:", bad_grid_ids)
+```
+
+```{python}
+# output_file = os.path.join(OUTPUT_DIR,  f"bad_grid_ERA5.csv")
+# os.makedirs(os.path.dirname(output_file), exist_ok=True)
+# # df_era5.to_csv(output_file, index=False)
+# bad_grids.to_csv(output_file, index=False)
+# print(f"Saved to: {output_file}\n")
+```
+
+```{python}
+output_file = os.path.join(OUTPUT_DIR,  f"grid_era5_combined.parquet")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+# df_era5.to_csv(output_file, index=False)
+df_clean.to_parquet(output_file, index=False)
+print(f"Saved to: {output_file}\n")
+```
+
+## NDVI
+
+```{python}
+def reshape_ndvi_wide_to_long(df_wide):
+    
+    print("Tranforming NDVI...")
+    print(f"Original shape: {df_wide.shape}")
+    
+    # extract variables and dates
+    all_columns = [col for col in df_wide.columns if col != 'grid_id']
+    
+    # extract variables and dates
+    column_info = []
+    
+    for col in all_columns:
+        # ndvi_(mean|std)_YYYY_MM
+        match = re.search(r'ndvi_(mean|std)_(\d{4})_(\d{2})$', col)
+        
+        if match:
+            stat_type = match.group(1)  
+            year = match.group(2)
+            month = match.group(3)
+            date_str = f"{year}-{month}-01" 
+            
+            column_info.append({
+                'original_col': col,
+                'stat_type': stat_type,
+                'Date': date_str
+            })
+        else:
+            print(f"Can't analyze {col}")
+    
+    df_col_info = pd.DataFrame(column_info)
+    
+    # unique dates
+    unique_dates = sorted(df_col_info['Date'].unique())
+    
+    print(f"\n{len(unique_dates)} unique months")
+    print(f"From: {unique_dates[0]} to {unique_dates[-1]}")
+    
+    # creating long framework
+    n_grids = len(df_wide)
+    n_dates = len(unique_dates)
+    
+    long_data = {
+        'grid_id': np.repeat(df_wide['grid_id'].values, n_dates),
+        'Date': np.tile(unique_dates, n_grids)
+    }
+    
+    # extract mean and std
+    print("\nExtracting Mean...")
+    mean_cols = df_col_info[df_col_info['stat_type'] == 'mean'].sort_values('Date')
+    mean_values = df_wide[mean_cols['original_col'].values].values
+    long_data['NDVI_mean'] = mean_values.flatten()
+    
+    print("Extracting Std...")
+    std_cols = df_col_info[df_col_info['stat_type'] == 'std'].sort_values('Date')
+    std_values = df_wide[std_cols['original_col'].values].values
+    long_data['NDVI_std'] = std_values.flatten()
+    
+    # Create dateframe
+    df_long = pd.DataFrame(long_data)
+    
+    # transform to datetime
+    df_long['Date'] = pd.to_datetime(df_long['Date'])
+
+    ## insert year and month after Date
+    date_idx = df_long.columns.get_loc('Date')
+    df_long.insert(date_idx + 1, 'Year', df_long['Date'].dt.year)
+    df_long.insert(date_idx + 2, 'Month', df_long['Date'].dt.month)
+    
+    ## order
+    df_long = df_long.sort_values(['grid_id', 'Date']).reset_index(drop=True)
+    
+    
+    print(f"\nComplete！")
+    print(f"Shape: {df_long.shape}")
+    
+    return df_long
+```
+
+```{python}
+df_ndvi_long = reshape_ndvi_wide_to_long(data['grid_ndvi_monthly'])
+```
+
+```{python}
+# output_file = os.path.join(OUTPUT_DIR,  f"grid_ndvi_long.parquet")
+# os.makedirs(os.path.dirname(output_file), exist_ok=True)
+# df_ndvi_long.to_parquet(output_file, index=False)
+# print(f"Saved to: {output_file}\n")
+```
+
+```{python}
+```
+
+## DEM
+
+```{python}
+grid_DEM = pd.read_parquet(DEM_DIR)
+```
+
+```{python}
+na_summary = (
+    grid_DEM.isna()
+      .sum()
+      .sort_values(ascending=False)
+)
+
+print("NA count per column (non-zero only):")
+print(na_summary[na_summary > 0])
+```
+
+```{python}
+bad_grids = (
+    grid_DEM.groupby("grid_id")["slope"]
+      .apply(lambda s: s.isna().mean())
+)
+
+bad_grids = bad_grids[bad_grids > 0]  
+print("Number of bad grids:", len(bad_grids))
+print("Example:", bad_grids.head())
+```
+
+```{python}
+bad_grid_ids = bad_grids.index
+
+grid_DEM_clean = grid_DEM[~grid_DEM["grid_id"].isin(bad_grid_ids)].copy()
+
+print("Bad Grid:", bad_grid_ids)
+```
+
+```{python}
+output_file = os.path.join(OUTPUT_DIR,  f"grid_dem_clean.parquet")
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
+grid_DEM_clean.to_parquet(output_file, index=False)
+print(f"Saved to: {output_file}\n")
+```
+
+
+
+```{python}
+df_landcover.columns
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

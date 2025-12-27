@@ -1,0 +1,108 @@
+---
+title: "Fire_Points"
+format: html
+---
+
+```{python}
+# from read_fire_points import CNFDBFirePointReader
+from pathlib import Path
+import geopandas as gpd
+import pandas as pd
+import numpy as np
+```
+
+
+```{python}
+# Read shape file
+shp_path = '/Users/henzhwang/Desktop/STA4101/Data/CNFDB/Fire Points/NFDB_point/NFDB_point_20250519.shp'
+fp_gdf = gpd.read_file(shp_path)
+```
+
+```{python}
+(
+    fp_gdf[fp_gdf["YEAR"].between(2019, 2024)]
+    .groupby(["SRC_AGENCY"])
+    .size()
+    .reset_index(name="fire_count")
+    .sort_values("fire_count", ascending=[False])
+)
+```
+
+```{python}
+# Filter only BC and AB data for further analysis
+
+# Filter YEAR first (2000–2024)
+gdf_filtered = fp_gdf[fp_gdf["YEAR"].between(2019, 2024)]
+
+# Filter SRC_AGENCY to only BC and AB
+# gdf_filtered = gdf_filtered[gdf_filtered["SRC_AGENCY"].isin(["BC", "AB"])]
+gdf_filtered = gdf_filtered[gdf_filtered["SRC_AGENCY"].isin(["BC"])]
+gdf_filtered
+```
+
+
+```{python}
+# Check if all Fire_ID and NFDBFRIED are unique
+
+# Columns name
+print("Columns names:")
+print(gdf_filtered.columns.tolist())
+print()
+
+
+def Check_id_duplicated(df, id_col, type=None):
+    if id_col:
+        id_duplicates = gdf_filtered[gdf_filtered.duplicated(subset=[id_col], keep=False)]
+        if not id_duplicates.empty:
+            print(f"\nDuplicate {id_col} values found: {id_duplicates.shape[0]}")
+            print(f"Unique {id_col} values found: {id_duplicates[id_col].unique().shape[0]}")
+            if type == "head":
+                print(id_duplicates[id_col].head())
+            elif type == "unique":
+                print(id_duplicates[id_col].unique())
+        else:
+            print(f"\nAll {id_col} values are unique.")
+    else:
+        print("\nNo {id_col} column found in the data.")
+
+Check_id_duplicated(gdf_filtered, 'FIRE_ID')
+Check_id_duplicated(gdf_filtered, 'NFDBFIREID', "head")
+
+# Clean duplicated NFDBFIREID by rules.
+gdf_filtered = (
+    gdf_filtered
+    .sort_values('SIZE_HA', ascending=False) \
+    .drop_duplicates(subset='NFDBFIREID', keep='first')
+)
+
+# Check again
+Check_id_duplicated(gdf_filtered, 'NFDBFIREID', "head")
+
+## change crs to EPSG:4326
+gdf_filtered = gdf_filtered.to_crs('EPSG:4326')
+gdf_filtered.crs
+```
+
+
+```{python}
+# Create columns and record large fires
+large_ids = set(gdf_filtered.loc[gdf_filtered['SIZE_HA'] >= 200, 'NFDBFIREID'])
+gdf_filtered['Large_Fire'] = gdf_filtered['NFDBFIREID'].apply(lambda x: 'YES' if x in large_ids else 'NO')
+print(f"The number of large fire: {gdf_filtered[gdf_filtered['Large_Fire'] == 'YES'].shape[0]}.")
+```
+
+```{python}
+from pathlib import Path
+
+## Exporting
+fire_points_proc_dir = 'Processed Data/Fire Points/Fire Points.shp'
+gdf_filtered.to_file(fire_points_proc_dir, driver="ESRI Shapefile")
+```
+
+
+```{python}
+```
+
+```{python}
+
+```

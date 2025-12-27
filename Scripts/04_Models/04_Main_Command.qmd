@@ -1,0 +1,172 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+# usage: main.py [-h] [--mode {train,predict}] --data_path DATA_PATH
+#                [--save_dir SAVE_DIR] [--sample_ratio SAMPLE_RATIO]
+#                [--num_neighbors NUM_NEIGHBORS]
+#                [--distance_threshold DISTANCE_THRESHOLD] [--rebuild_graph]
+#                [--split_by_date] [--train_end TRAIN_END] [--val_end VAL_END]
+#                [--train_ratio TRAIN_RATIO] [--val_ratio VAL_RATIO]
+#                [--model_type {full,simple}] [--hidden_dim HIDDEN_DIM]
+#                [--num_stgnn_blocks NUM_STGNN_BLOCKS]
+#                [--num_gcn_layers NUM_GCN_LAYERS] [--dropout DROPOUT]
+#                [--use_attention] [--seq_len SEQ_LEN] [--batch_size BATCH_SIZE]
+#                [--num_epochs NUM_EPOCHS] [--learning_rate LEARNING_RATE]
+#                [--weight_decay WEIGHT_DECAY]
+#                [--loss_type {focal,weighted_bce,bce}]
+#                [--pos_weight POS_WEIGHT]
+#                [--early_stopping_patience EARLY_STOPPING_PATIENCE]
+#                [--num_workers NUM_WORKERS]
+```
+
+```{python}
+## simple
+python main.py \
+  --mode train \
+  --data_path '/Users/henzhwang/Desktop/STA4101/Processed Data/grid_all_neighbors.parquet' \
+  --save_dir '/Users/henzhwang/Desktop/STA4101/Output/Model Run/Standard_128' \
+  --split_by_date --train_end 2022-12-31 --val_end 2023-12-31 \
+  --num_neighbors 8 --distance_threshold 0.35 --rebuild_graph \
+  --model_type full \
+  --num_gcn_layers 2 \
+  --hidden_dim 128 \
+  --dropout 0.3 \
+  --seq_len 14 \
+  --batch_size 16 \
+  --num_epochs 20 \
+  --prediction_threshold 0.2 \
+  --learning_rate 0.001 \
+  --weight_decay 1e-5 \
+  --loss_type focal \
+  --num_workers 4
+```
+
+```{python}
+## full
+python main.py \
+  --mode train \
+  --data_path '/Users/henzhwang/Desktop/STA4101/Processed Data/grid_all_neighbors.parquet' \
+  --save_dir '/Users/henzhwang/Desktop/STA4101/Output/Model Run/Attention' \
+  --split_by_date --train_end 2022-12-31 --val_end 2023-12-31 \
+  --num_neighbors 8 --distance_threshold 0.35 --rebuild_graph \
+  --model_type full \
+  --num_stgnn_blocks 3 \
+  --hidden_dim 64 \
+  --dropout 0.3 \
+  --seq_len 14 \
+  --batch_size 16 \
+  --num_epochs 20 \
+  --prediction_threshold 0.2 \
+  --learning_rate 0.001 \
+  --weight_decay 1e-5 \
+  --loss_type focal \
+  --early_stopping_patience 15 \
+  --num_workers 4
+  --use_attention
+```
+
+```{python}
+save_dir '/Users/henzhwang/Desktop/STA4101/Output/Model Run/Standard' \
+save_dir '/Users/henzhwang/Desktop/STA4101/Output/Model Run/Standard_128' \
+save_dir '/Users/henzhwang/Desktop/STA4101/Output/Model Run/Attention' \
+```
+
+```{python}
+python main.py \
+  --mode train \
+  --data_path '/Users/henzhwang/Desktop/STA4101/Processed Data/grid_all_neighbors.parquet' \
+  --save_dir '/Users/henzhwang/Desktop/STA4101/Output/Model Run/Standard_epo50' \
+  --split_by_date --train_end 2022-12-31 --val_end 2023-12-31 \
+  --num_neighbors 8 --distance_threshold 0.35 --rebuild_graph \
+  --model_type full \
+  --num_stgnn_blocks 3 \
+  --hidden_dim 64 \
+  --dropout 0.3 \
+  --seq_len 14 \
+  --batch_size 16 \
+  --num_epochs 50 \
+  --learning_rate 0.001 \
+  --weight_decay 1e-5 \
+  --loss_type focal \
+  --early_stopping_patience 15
+```
+
+```{python}
+python main.py \
+  --mode predict \
+  --data_path '/Users/henzhwang/Desktop/STA4101/Processed Data/grid_all.parquet' \
+  --save_dir '/Users/henzhwang/Desktop/STA4101/Output/Model Run/Standard_reduced' \
+  --split_by_date --train_end 2022-12-31 --val_end 2023-12-31 \
+  --num_neighbors 8 --distance_threshold 0.35 \
+  --model_type full \
+  --num_stgnn_blocks 3 \
+  --hidden_dim 64 \
+  --dropout 0.3 \
+  --seq_len 14 \
+  --batch_size 16 \
+  --num_epochs 20 \
+  --learning_rate 0.001 \
+  --weight_decay 1e-5 \
+  --loss_type focal \
+  --early_stopping_patience 15
+```
+
+```{python}
+python main.py \
+  --mode predict \
+  --data_path '/Users/henzhwang/Desktop/STA4101/Processed Data/grid_all_neighbors.parquet' \
+  --save_dir '/Users/henzhwang/Desktop/STA4101/Output/Model Run/Standard_epo50' \
+  --split_by_date --train_end 2022-12-31 --val_end 2023-12-31 \
+  --num_neighbors 8 --distance_threshold 0.35 \
+  --model_type full \
+  --num_stgnn_blocks 3 \
+  --hidden_dim 64 \
+  --dropout 0.3 \
+  --seq_len 14 \
+  --batch_size 16 \
+  --num_epochs 50 \
+  --learning_rate 0.001 \
+  --weight_decay 1e-5 \
+  --loss_type focal \
+  --early_stopping_patience 15
+```
+
+```{python}
+python main.py \
+  --mode predict \
+  --data_path '/Users/henzhwang/Desktop/STA4101/Processed Data/grid_all_neighbors.parquet' \
+  --save_dir '/Users/henzhwang/Desktop/STA4101/Output/Model Run/Standard_reduced' \
+  --split_by_date --train_end 2022-12-31 --val_end 2023-12-31 \
+  --num_neighbors 8 --distance_threshold 0.35 \
+  --model_type full \
+  --num_stgnn_blocks 3 \
+  --hidden_dim 64 \
+  --dropout 0.3 \
+  --seq_len 14 \
+  --batch_size 16 \
+  --num_epochs 20 \
+  --learning_rate 0.001 \
+  --weight_decay 1e-5 \
+  --loss_type focal \
+  --early_stopping_patience 15
+```
+
+```{python}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
