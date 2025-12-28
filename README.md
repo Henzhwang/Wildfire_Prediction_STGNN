@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ---
 title: "README"
 format: html
@@ -51,3 +52,6 @@ Note: The `Data` and `Processed_Data` directories are not included in this repos
 
 
 
+=======
+The Data and Processed Data folders are not included in this repository as their contained files are too large to be pushed to GitHub.
+>>>>>>> e692800ce0875d205c299c2b4c1373c37a4a99af
