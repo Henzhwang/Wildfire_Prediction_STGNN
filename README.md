@@ -1,9 +1,3 @@
-<<<<<<< HEAD
----
-title: "README"
-format: html
----
-
 ## Overview
 
 This repo contains the implementation of using a Spatio-Temporal Graph Neural Network (ST-GNN) framework for prediction in wildfire occurrence in British Columbia, Canada. This study has integrated multiple environmental data sources, including ERA5 reanalysis data, terrain characteristics, MODIS NDVI indices, and land cover data, along with the historical fire points and official BC boundary from 2019 to 2024. All implementation was done in Python, and the paper was produced in LaTeX via Overleaf.
@@ -48,10 +42,4 @@ The repo was originally structured as:
 
 `Paper` contains the Final written paper and correspnding citation bibtex files.
 
-Note: The `Data` and `Processed_Data` directories are not included in this repository, as several files exceed GitHub’s 100 MB file size limit.
-
-
-
-=======
-The Data and Processed Data folders are not included in this repository as their contained files are too large to be pushed to GitHub.
->>>>>>> e692800ce0875d205c299c2b4c1373c37a4a99af
+Note: The `Data` and `Processed_Data` directories are not included in this repository, as several files exceed GitHub’s 100 MB file size limit
