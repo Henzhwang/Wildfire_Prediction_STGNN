@@ -3,18 +3,6 @@
 This repo contains the implementation of using a Spatio-Temporal Graph Neural Network (ST-GNN) framework for prediction in wildfire occurrence in British Columbia, Canada. This study has integrated multiple environmental data sources, including ERA5 reanalysis data, terrain characteristics, MODIS NDVI indices, and land cover data, along with the historical fire points and official BC boundary from 2019 to 2024. All implementation was done in Python, and the paper was produced in LaTeX via Overleaf.
 
 
-## Environment and Installation
-
-Training was performed on two computers using different Conda environments. The provided [`requirements.txt`](requirements.txt) uses the package versions recorded on the second computer, with Python 3.12.8.
-
-Activate a Python 3.12.8 environment, then run the following command from the repository root:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-These requirements cover model training and evaluation using preprocessed data. Data collection, geospatial preprocessing, and Quarto rendering require additional dependencies. The reference environment passed dependency import checks; the complete workflow was not rerun as part of those checks.
-
 ## File Structure
 
 The repo was originally structured as:
@@ -55,3 +43,15 @@ The repo was originally structured as:
 `Paper` contains the Final written paper and correspnding citation bibtex files.
 
 Note: The `Data` and `Processed_Data` directories are not included in this repository, as several files exceed GitHub’s 100 MB file size limit
+
+## Environment and Installation
+
+Training was performed on two computers using different Conda environments. The provided [`requirements.txt`](requirements.txt) uses the package versions recorded on the second computer, with Python 3.12.8.
+
+Activate a Python 3.12.8 environment, then run the following command from the repository root:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+These requirements cover model training and evaluation using preprocessed data. Data collection, geospatial preprocessing, and Quarto rendering require additional dependencies. The reference environment passed dependency import checks; the complete workflow was not rerun as part of those checks.
