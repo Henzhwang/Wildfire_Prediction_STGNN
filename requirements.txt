@@ -1,0 +1,15 @@
+# Wildfire STGNN: model training and evaluation with preprocessed data.
+# Reference environment: Python 3.12.8, macOS arm64.
+# These package versions passed import checks on the reference computer.
+# Data collection, geospatial preprocessing and Quarto are outside this scope.
+# Install with: python -m pip install -r requirements.txt
+
+numpy==2.3.5
+pandas==2.3.3
+scipy==1.16.3
+scikit-learn==1.7.2
+matplotlib==3.10.7
+seaborn==0.13.2
+torch==2.9.1
+torch-geometric==2.6.1
+pyarrow==22.0.0
